@@ -1,0 +1,14 @@
+{
+    "crons": [
+      {
+        "path": "/api/cron/reminders",
+        "schedule": "0 3 * * *",
+        "comment": "Morning reminder at 9 AM IST (3:30 AM UTC)"
+      },
+      {
+        "path": "/api/cron/reminders",
+        "schedule": "30 14 * * *",
+        "comment": "Evening reminder at 8 PM IST (2:30 PM UTC)"
+      }
+    ]
+  }
