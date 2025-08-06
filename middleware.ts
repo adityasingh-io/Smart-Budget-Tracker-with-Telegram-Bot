@@ -1,14 +1,20 @@
-// middleware.ts (create this in your project root, same level as package.json)
+// middleware.ts (in your project root)
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 // Pages that don't require authentication
-const publicPaths = ['/login', '/api/auth/login', '/api/auth/check']
+const publicPaths = [
+  '/login',
+  '/api/auth/login',
+  '/api/auth/check',
+  '/api/telegram/webhook',    // ← ADD THIS LINE! Telegram webhook must be public
+  '/api/cron/reminders',      // ← ADD THIS TOO! Cron jobs must be public
+]
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   
-  // Allow public paths
+  // Allow public paths - CHECK IF PATH STARTS WITH ANY PUBLIC PATH
   if (publicPaths.some(path => pathname.startsWith(path))) {
     return NextResponse.next()
   }
