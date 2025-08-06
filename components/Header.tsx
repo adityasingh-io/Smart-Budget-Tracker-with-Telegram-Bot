@@ -9,6 +9,7 @@ import { format } from 'date-fns'
 import { useRouter } from 'next/navigation'
 
 export default function Header() {
+  const router = useRouter()
   const pathname = usePathname()
   const { theme, toggleTheme } = useTheme()
   const { settings, getPaydayCountdown } = useStore()

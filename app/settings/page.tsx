@@ -8,7 +8,7 @@ import toast from 'react-hot-toast'
 import MonthlySalaryManager from '@/components/MonthlySalaryManager'
 
 export default function SettingsPage() {
-  const { settings, updateSettings, categories, updateCategories } = useStore()
+  const { settings, updateSettings, categories } = useStore()
   const [activeTab, setActiveTab] = useState('general')
 
   const handleSettingChange = (key: string, value: any) => {

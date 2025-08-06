@@ -255,50 +255,63 @@ export const useStore = create<Store>((set, get) => ({
       }))
 
       console.log('✅ Expense added to Supabase')
-    } catch (error) {
-      console.error('❌ Failed to add expense:', error)
-      set({ loading: false })
-      throw error
-    }
 
+      // ============= TELEGRAM NOTIFICATION =============
     try {
+        // Check if Telegram is configured
+        if (!process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN || !process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID) {
+          console.log('⚠️ Telegram not configured - skipping notification')
+          return
+        }
+  
         const { settings } = get()
         const todaySpent = get().getTodaySpending()
         const remaining = get().getRemainingBudget()
+        
+        console.log('📱 Sending Telegram notification...')
+        
+        // Send basic notification
+        await telegram.sendMessage(
+          `💰 <b>New Expense Added</b>\n\n` +
+          `Amount: ₹${expense.amount}\n` +
+          `Category: ${expense.category}\n` +
+          `Description: ${expense.description || 'N/A'}\n\n` +
+          `Today's Total: ₹${todaySpent}\n` +
+          `Remaining Budget: ₹${remaining}`
+        )
         
         // Check if over daily budget
         const dailyBudget = Math.floor(settings.personalBudget / 30)
         if (todaySpent > dailyBudget) {
           await telegram.sendMessage(
             `⚠️ <b>Over Daily Budget!</b>\n\n` +
-            `You just spent: ₹${expense.amount} on ${expense.category}\n` +
-            `Today's total: ₹${todaySpent} (Budget: ₹${dailyBudget})\n` +
-            `Month remaining: ₹${remaining}`
+            `Today's spending: ₹${todaySpent}\n` +
+            `Daily budget: ₹${dailyBudget}\n` +
+            `Over by: ₹${todaySpent - dailyBudget}`
           )
-        } else if (remaining < 5000) {
+        }
+        
+        // Low balance alert
+        if (remaining < 5000) {
           await telegram.sendMessage(
             `🔴 <b>Low Balance Alert!</b>\n\n` +
-            `Added: ₹${expense.amount} for ${expense.category}\n` +
             `Only ₹${remaining} left for the month!\n` +
             `Be careful with spending.`
           )
         }
         
-        // Send summary every 5 expenses
-        const expenseCount = get().expenses.length
-        if (expenseCount % 5 === 0) {
-          await telegram.sendMessage(
-            `📊 <b>Quick Summary</b>\n\n` +
-            `Expenses logged: ${expenseCount}\n` +
-            `Today's spending: ₹${todaySpent}\n` +
-            `Remaining budget: ₹${remaining}`
-          )
-        }
-      } catch (error) {
-        console.log('Telegram notification failed:', error)
-        // Don't break the app if Telegram fails
+        console.log('✅ Telegram notification sent')
+      } catch (telegramError) {
+        console.error('❌ Telegram error:', telegramError)
+        // Don't throw - we don't want Telegram failures to break the app
       }
+      // ============= END TELEGRAM NOTIFICATION =============
 
+    } catch (error) {
+      console.error('❌ Failed to add expense:', error)
+      set({ loading: false })
+      throw error
+    }
   },
 
   // Delete expense - Remove from Supabase
