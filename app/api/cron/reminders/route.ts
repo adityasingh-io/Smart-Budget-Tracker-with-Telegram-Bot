@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { format, subDays, getDay } from 'date-fns'
-import { generateMorningBrief, generateEveningReport } from '../../telegram/utils'
+import { generateMorningBrief, generateEveningReport } from '../../telegram/utils';
 
 // Helper to send Telegram message
 async function sendTelegramMessage(text: string, keyboard?: any) {

@@ -116,7 +116,7 @@ function getExpenseActionKeyboard(expenseId: string) {
 }
 
 // ============= MORNING BRIEF (9 AM) =============
-export async function generateMorningBrief(profile: any): Promise<string> {
+async function generateMorningBrief(profile: any): Promise<string> {
   const yesterday = subDays(new Date(), 1)
   const { data: yesterdayExpenses } = await supabase
     .from('expenses')
@@ -179,7 +179,7 @@ ${tip}
 }
 
 // ============= EVENING REPORT (8 PM) =============
-export async function generateEveningReport(profile: any): Promise<string> {
+async function generateEveningReport(profile: any): Promise<string> {
   const today = new Date()
   const { data: todayExpenses } = await supabase
     .from('expenses')
