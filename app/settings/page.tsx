@@ -1,4 +1,3 @@
-// app/settings/page.tsx
 'use client'
 
 import { useState } from 'react'
@@ -66,28 +65,6 @@ export default function SettingsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium mb-2">Default Total Salary</label>
-                    <input
-                      type="number"
-                      value={settings.totalSalary}
-                      onChange={(e) => handleSettingChange('totalSalary', parseInt(e.target.value))}
-                      className="input"
-                    />
-                    <p className="text-sm text-gray-500 mt-1">Used when no monthly salary is set</p>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Default Personal Budget</label>
-                    <input
-                      type="number"
-                      value={settings.personalBudget}
-                      onChange={(e) => handleSettingChange('personalBudget', parseInt(e.target.value))}
-                      className="input"
-                    />
-                    <p className="text-sm text-gray-500 mt-1">Used when no monthly budget is set</p>
-                  </div>
-
-                  <div>
                     <label className="block text-sm font-medium mb-2">Currency</label>
                     <select
                       value={settings.currency}
@@ -99,16 +76,38 @@ export default function SettingsPage() {
                       <option value="€">€ (EUR)</option>
                     </select>
                   </div>
+
+                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                      <strong>Note:</strong> To manage your monthly salary and budget, go to the <strong>Salary</strong> tab. 
+                      Each month can have different salary and budget values.
+                    </p>
+                  </div>
                 </div>
               )}
 
               {activeTab === 'salary' && (
-                <MonthlySalaryManager />
+                <div>
+                  <div className="mb-4">
+                    <h3 className="text-lg font-semibold">Monthly Salary Management</h3>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Set different salary and budget amounts for each month. 
+                      The app will automatically use the correct values based on your fiscal month.
+                    </p>
+                  </div>
+                  <MonthlySalaryManager />
+                </div>
               )}
 
               {activeTab === 'budget' && (
                 <div className="space-y-6">
-                  <h3 className="text-lg font-semibold">Category Budgets</h3>
+                  <div>
+                    <h3 className="text-lg font-semibold mb-2">Category Budgets</h3>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Default budget allocations for each category. These are used as templates when creating new months.
+                    </p>
+                  </div>
+                  
                   {Object.entries(settings.categoryBudgets).map(([category, budget]) => (
                     <div key={category}>
                       <label className="block text-sm font-medium mb-2">{category}</label>
@@ -126,13 +125,14 @@ export default function SettingsPage() {
                   ))}
 
                   <div>
-                    <label className="block text-sm font-medium mb-2">Daily Food Budget</label>
+                    <label className="block text-sm font-medium mb-2">Daily Food Budget Target</label>
                     <input
                       type="number"
                       value={settings.dailyFoodBudget}
                       onChange={(e) => handleSettingChange('dailyFoodBudget', parseInt(e.target.value))}
                       className="input"
                     />
+                    <p className="text-sm text-gray-500 mt-1">Target for daily food expenses</p>
                   </div>
                 </div>
               )}
@@ -180,7 +180,7 @@ export default function SettingsPage() {
                     <h4 className="font-medium mb-2">Fake Entry Mappings</h4>
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between p-2 bg-gray-100 dark:bg-gray-800 rounded">
-                        <span>Cigarettes → Miscellaneous</span>
+                        <span>Chai → Miscellaneous</span>
                       </div>
                       <div className="flex justify-between p-2 bg-gray-100 dark:bg-gray-800 rounded">
                         <span>Alcohol → Drinks</span>

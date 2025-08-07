@@ -2,7 +2,96 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { format, subDays, startOfWeek, startOfMonth, startOfDay, endOfDay } from 'date-fns'
 
-// Send message to Telegram - FIXED keyboard handling
+// Helper: Get fiscal month boundaries based on salary day
+function getFiscalMonthBounds(salaryDay: number) {
+  const today = new Date()
+  const currentDay = today.getDate()
+  const currentMonth = today.getMonth()
+  const currentYear = today.getFullYear()
+  
+  let fiscalStart: Date
+  let fiscalEnd: Date
+  
+  if (currentDay >= salaryDay) {
+    fiscalStart = new Date(currentYear, currentMonth, salaryDay, 0, 0, 0)
+    fiscalEnd = new Date(currentYear, currentMonth + 1, salaryDay - 1, 23, 59, 59)
+  } else {
+    fiscalStart = new Date(currentYear, currentMonth - 1, salaryDay, 0, 0, 0)
+    fiscalEnd = new Date(currentYear, currentMonth, salaryDay - 1, 23, 59, 59)
+  }
+  
+  return { fiscalStart, fiscalEnd }
+}
+
+// Helper: Calculate payday countdown
+function getPaydayCountdown(salaryDay: number): number {
+  const today = new Date()
+  const currentDay = today.getDate()
+  const currentMonth = today.getMonth()
+  const currentYear = today.getFullYear()
+  
+  let daysUntilPayday: number
+  
+  if (currentDay < salaryDay) {
+    daysUntilPayday = salaryDay - currentDay
+  } else if (currentDay === salaryDay) {
+    const hourOfDay = today.getHours()
+    if (hourOfDay < 12) {
+      daysUntilPayday = 0
+    } else {
+      const nextPayday = new Date(currentYear, currentMonth + 1, salaryDay)
+      const msPerDay = 1000 * 60 * 60 * 24
+      daysUntilPayday = Math.ceil((nextPayday.getTime() - today.getTime()) / msPerDay)
+    }
+  } else {
+    const nextPayday = new Date(currentYear, currentMonth + 1, salaryDay)
+    const msPerDay = 1000 * 60 * 60 * 24
+    daysUntilPayday = Math.ceil((nextPayday.getTime() - today.getTime()) / msPerDay)
+  }
+  
+  return Math.max(0, Math.min(31, daysUntilPayday))
+}
+
+// Get current month's budget from monthly_salaries table
+async function getCurrentBudget(profile: any): Promise<number> {
+  const today = new Date()
+  const currentDay = today.getDate()
+  const salaryDay = profile.salary_day || 7
+  
+  // Determine fiscal month
+  let fiscalMonth: Date
+  if (currentDay >= salaryDay) {
+    fiscalMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+  } else {
+    fiscalMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+  }
+  
+  // Try to get from monthly_salaries
+  const { data: monthlySalary } = await supabase
+    .from('monthly_salaries')
+    .select('personal_budget')
+    .eq('profile_id', profile.id)
+    .eq('month', format(fiscalMonth, 'yyyy-MM') + '-01')
+    .single()
+  
+  return monthlySalary?.personal_budget || profile.personal_budget || 35000
+}
+
+// Get total spent in fiscal month
+async function getMonthlySpent(profile: any): Promise<number> {
+  const { fiscalStart, fiscalEnd } = getFiscalMonthBounds(profile.salary_day || 7)
+  
+  const { data } = await supabase
+    .from('expenses')
+    .select('amount')
+    .eq('profile_id', profile.id)
+    .gte('expense_date', fiscalStart.toISOString())
+    .lte('expense_date', fiscalEnd.toISOString())
+  
+  return data?.reduce((sum, e) => sum + Number(e.amount), 0) || 0
+}
+
+// Send message to Telegram
 async function sendMessage(chatId: number, text: string, useKeyboard: boolean = false) {
   const token = process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN
   if (!token) return
@@ -14,7 +103,6 @@ async function sendMessage(chatId: number, text: string, useKeyboard: boolean = 
       parse_mode: 'HTML'
     }
     
-    // Only add keyboard if explicitly requested
     if (useKeyboard) {
       body.reply_markup = {
         keyboard: [
@@ -104,16 +192,14 @@ function detectCategory(text: string): string {
 }
 
 function parseExpense(text: string): { amount: number; description: string } | null {
-  // Skip if it's a command
   const commands = ['balance', 'today', 'yesterday', 'week', 'month', 'report', 'help', 'food', 'travel', 'drinks', 'misc', 'other', 'morning', 'evening', 'weekend']
   if (commands.includes(text.toLowerCase())) return null
   
-  // Try different patterns
   const patterns = [
-    /^(\d+)\s+(.+)$/,           // "200 lunch"
-    /^(.+)\s+(\d+)$/,           // "lunch 200"
-    /^spent?\s+(\d+)\s+(?:on\s+)?(.+)$/i,  // "spent 200 on lunch"
-    /^paid?\s+(\d+)\s+(?:for\s+)?(.+)$/i,  // "paid 200 for lunch"
+    /^(\d+)\s+(.+)$/,
+    /^(.+)\s+(\d+)$/,
+    /^spent?\s+(\d+)\s+(?:on\s+)?(.+)$/i,
+    /^paid?\s+(\d+)\s+(?:for\s+)?(.+)$/i,
   ]
   
   for (const pattern of patterns) {
@@ -163,18 +249,6 @@ async function addExpense(profile: any, amount: number, description: string, cat
   }
 }
 
-async function getMonthlySpent(profile: any): Promise<number> {
-  const monthStart = startOfMonth(new Date())
-  
-  const { data } = await supabase
-    .from('expenses')
-    .select('amount')
-    .eq('profile_id', profile.id)
-    .gte('expense_date', monthStart.toISOString())
-  
-  return data?.reduce((sum, e) => sum + Number(e.amount), 0) || 0
-}
-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -213,14 +287,14 @@ export async function POST(request: NextRequest) {
         const success = await addExpense(profile, amount, description, detectCategory(description))
         if (success) {
           const spent = await getMonthlySpent(profile)
-          const remaining = profile.personal_budget - spent
+          const budget = await getCurrentBudget(profile)
+          const remaining = budget - spent
           await sendMessage(chatId, `✅ Added: ${description} - ${formatMoney(amount)}\n💰 Remaining: ${formatMoney(remaining)}`)
         } else {
           await sendMessage(chatId, '❌ Failed to add expense')
         }
       }
       
-      // Answer callback to remove loading state
       await fetch(`https://api.telegram.org/bot${process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -235,26 +309,54 @@ export async function POST(request: NextRequest) {
     const command = text.toLowerCase()
     console.log('Command:', command)
     
-    // Process commands
     let response = ''
     let useKeyboard = false
     let useInline = false
     
-    // Balance command
+    // Balance command - UPDATED
     if (command === 'balance' || command === 'bal') {
       const spent = await getMonthlySpent(profile)
-      const remaining = profile.personal_budget - spent
-      const daysLeft = 30 - new Date().getDate()
-      const dailySuggested = daysLeft > 0 ? Math.floor(remaining / daysLeft) : 0
+      const budget = await getCurrentBudget(profile)
+      const remaining = budget - spent
+      
+      const { fiscalStart, fiscalEnd } = getFiscalMonthBounds(profile.salary_day || 7)
+      const daysPassed = Math.round((new Date().getTime() - fiscalStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+      const daysUntilPayday = getPaydayCountdown(profile.salary_day || 7)
+      
+      const daysInFiscalMonth = Math.round((fiscalEnd.getTime() - fiscalStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+      const originalDailyBudget = Math.floor(budget / daysInFiscalMonth)
+      
+      const adjustedDailyBudget = remaining <= 0 
+        ? 0 
+        : daysUntilPayday > 0 
+          ? Math.floor(remaining / daysUntilPayday)
+          : remaining
+      
+      const expectedSpending = originalDailyBudget * daysPassed
+      const overspending = spent - expectedSpending
       
       response = `💰 <b>Balance Report</b>\n\n`
-      response += `Budget: ${formatMoney(profile.personal_budget)}\n`
-      response += `Spent: ${formatMoney(spent)}\n`
-      response += `Remaining: ${formatMoney(remaining)}\n\n`
-      response += `Days left: ${daysLeft}\n`
-      response += `Suggested daily: ${formatMoney(dailySuggested)}`
+      response += `<b>Fiscal Period:</b> ${format(fiscalStart, 'MMM d')} - ${format(fiscalEnd, 'MMM d')}\n`
+      response += `<b>Monthly Budget:</b> ${formatMoney(budget)}\n`
+      response += `<b>Spent:</b> ${formatMoney(spent)}\n`
+      response += `<b>Remaining:</b> ${formatMoney(remaining)}\n\n`
+      
+      response += `<b>Progress (Day ${daysPassed}/${daysInFiscalMonth}):</b>\n`
+      response += `${daysUntilPayday === 0 ? '🎉 Payday!' : `${daysUntilPayday} days to payday`}\n`
+      response += `Original daily: ${formatMoney(originalDailyBudget)}\n`
+      response += `Can spend daily: ${formatMoney(adjustedDailyBudget)}\n\n`
+      
+      if (remaining <= 0) {
+        response += `🔴 Over budget by ${formatMoney(Math.abs(remaining))}!\n`
+        response += `Stop spending until payday!`
+      } else if (overspending > 1000) {
+        response += `⚠️ Overspending by ${formatMoney(overspending)}\n`
+        response += `Reduce to ${formatMoney(adjustedDailyBudget)}/day`
+      } else {
+        response += `✅ On track! Can spend ${formatMoney(adjustedDailyBudget)}/day`
+      }
     }
-    // Today command
+    // Today command - UPDATED
     else if (command === 'today') {
       const todayStart = startOfDay(new Date())
       const todayEnd = endOfDay(new Date())
@@ -267,122 +369,156 @@ export async function POST(request: NextRequest) {
         .lte('expense_date', todayEnd.toISOString())
       
       const total = expenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0
-      const dailyBudget = Math.floor(profile.personal_budget / 30)
+      
+      // Calculate today's budget based on remaining
+      const spent = await getMonthlySpent(profile)
+      const budget = await getCurrentBudget(profile)
+      const remaining = budget - spent
+      const daysUntilPayday = getPaydayCountdown(profile.salary_day || 7)
+      const adjustedDailyBudget = remaining <= 0 ? 0 : Math.floor(remaining / Math.max(daysUntilPayday, 1))
       
       response = `📊 <b>Today's Report</b>\n\n`
       
       if (!expenses || expenses.length === 0) {
         response += 'No expenses yet today!\n\n'
-        response += `Daily budget: ${formatMoney(dailyBudget)}`
+        response += `Today's budget: ${formatMoney(adjustedDailyBudget)}`
       } else {
         expenses.forEach(e => {
           response += `• ${e.description}: ${formatMoney(Number(e.amount))}\n`
         })
-        response += `\nTotal: ${formatMoney(total)} / ${formatMoney(dailyBudget)}\n`
-        response += total > dailyBudget ? '⚠️ Over budget!' : '✅ Within budget!'
+        response += `\n<b>Total:</b> ${formatMoney(total)} / ${formatMoney(adjustedDailyBudget)}\n`
+        
+        if (total > adjustedDailyBudget) {
+          response += `⚠️ <b>Over by:</b> ${formatMoney(total - adjustedDailyBudget)}\n`
+          response += `💡 Try a no-spend day tomorrow`
+        } else {
+          response += `✅ <b>Can still spend:</b> ${formatMoney(adjustedDailyBudget - total)}`
+        }
       }
     }
-    // Yesterday command
-    else if (command === 'yesterday') {
-      const yesterday = subDays(new Date(), 1)
-      const startOfYesterday = startOfDay(yesterday)
-      const endOfYesterday = endOfDay(yesterday)
+    // Week command - UPDATED for Monday-Sunday
+    else if (command === 'week' || command === 'weekly') {
+      const today = new Date()
+      const currentWeekDay = today.getDay()
+      const daysToMonday = currentWeekDay === 0 ? 6 : currentWeekDay - 1
+      
+      const weekStart = new Date(today)
+      weekStart.setDate(today.getDate() - daysToMonday)
+      weekStart.setHours(0, 0, 0, 0)
+      
+      const weekEnd = new Date(weekStart)
+      weekEnd.setDate(weekStart.getDate() + 6)
+      weekEnd.setHours(23, 59, 59, 999)
       
       const { data: expenses } = await supabase
         .from('expenses')
-        .select('*, categories(name)')
-        .eq('profile_id', profile.id)
-        .gte('expense_date', startOfYesterday.toISOString())
-        .lte('expense_date', endOfYesterday.toISOString())
-      
-      const total = expenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0
-      
-      response = `📊 <b>Yesterday's Report</b>\n\n`
-      
-      if (!expenses || expenses.length === 0) {
-        response += 'No expenses yesterday!'
-      } else {
-        expenses.forEach(e => {
-          response += `• ${e.description}: ${formatMoney(Number(e.amount))}\n`
-        })
-        response += `\nTotal: ${formatMoney(total)}`
-      }
-    }
-    // Week command
-    else if (command === 'week' || command === 'weekly' || command === 'this week') {
-      const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
-      
-      const { data: expenses } = await supabase
-        .from('expenses')
-        .select('amount')
+        .select('amount, expense_date')
         .eq('profile_id', profile.id)
         .gte('expense_date', weekStart.toISOString())
+        .lte('expense_date', weekEnd.toISOString())
       
       const total = expenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0
-      const weekBudget = Math.floor(profile.personal_budget / 30) * 7
       
-      response = `📈 <b>Weekly Report</b>\n\n`
-      response += `Week total: ${formatMoney(total)} / ${formatMoney(weekBudget)}\n`
-      response += `Daily average: ${formatMoney(Math.floor(total / 7))}\n`
-      response += total > weekBudget ? '⚠️ Over weekly budget!' : '✅ Within budget!'
+      // Get budget info
+      const budget = await getCurrentBudget(profile)
+      const { fiscalStart, fiscalEnd } = getFiscalMonthBounds(profile.salary_day || 7)
+      const daysInFiscalMonth = Math.round((fiscalEnd.getTime() - fiscalStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+      const dailyBudget = Math.floor(budget / daysInFiscalMonth)
+      
+      // Calculate daily totals for the week
+      const dailyTotals: Record<string, number> = {}
+      const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+      days.forEach(day => dailyTotals[day] = 0)
+      
+      expenses?.forEach(e => {
+        const expenseDate = new Date(e.expense_date)
+        const dayIndex = expenseDate.getDay()
+        const dayName = days[dayIndex === 0 ? 6 : dayIndex - 1] // Sunday is 0, but it's the 7th day
+        dailyTotals[dayName] = (dailyTotals[dayName] || 0) + Number(e.amount)
+      })
+      
+      // Days passed in week
+      const daysPassedInWeek = Math.min(7, Math.floor((today.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24)) + 1)
+      const weekBudgetSoFar = dailyBudget * daysPassedInWeek
+      
+      response = `📈 <b>Weekly Report</b>\n`
+      response += `${format(weekStart, 'MMM d')} - ${format(weekEnd, 'MMM d')}\n\n`
+      
+      response += `<b>Daily Breakdown:</b>\n`
+      days.forEach((day, index) => {
+        const amount = dailyTotals[day]
+        if (index < daysPassedInWeek) {
+          const dayStatus = amount > dailyBudget ? '⚠️' : amount > 0 ? '✅' : '⭕'
+          response += `${day}: ${formatMoney(amount)} ${dayStatus}\n`
+        } else {
+          response += `${day}: -\n`
+        }
+      })
+      
+      response += `\n<b>Week Summary:</b>\n`
+      response += `Spent: ${formatMoney(total)}\n`
+      response += `Budget (${daysPassedInWeek} days): ${formatMoney(weekBudgetSoFar)}\n`
+      response += `Daily average: ${formatMoney(Math.floor(total / Math.max(daysPassedInWeek, 1)))}\n\n`
+      
+      if (total > weekBudgetSoFar) {
+        response += `⚠️ Over by ${formatMoney(total - weekBudgetSoFar)}`
+      } else {
+        response += `✅ Under by ${formatMoney(weekBudgetSoFar - total)}`
+      }
     }
-    // Month command
+    // Month command - UPDATED
     else if (command === 'month' || command === 'monthly') {
       const spent = await getMonthlySpent(profile)
-      const remaining = profile.personal_budget - spent
-      const daysPassed = new Date().getDate()
+      const budget = await getCurrentBudget(profile)
+      const remaining = budget - spent
+      
+      const { fiscalStart, fiscalEnd } = getFiscalMonthBounds(profile.salary_day || 7)
+      const daysPassed = Math.round((new Date().getTime() - fiscalStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+      const daysUntilPayday = getPaydayCountdown(profile.salary_day || 7)
+      const daysInFiscalMonth = Math.round((fiscalEnd.getTime() - fiscalStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+      
+      const dailyAverage = daysPassed > 0 ? Math.floor(spent / daysPassed) : 0
+      const dailyBudget = Math.floor(budget / daysInFiscalMonth)
+      const projectedTotal = dailyAverage * daysInFiscalMonth
       
       response = `📊 <b>Monthly Report</b>\n\n`
-      response += `Day ${daysPassed} of 30\n\n`
-      response += `Budget: ${formatMoney(profile.personal_budget)}\n`
-      response += `Spent: ${formatMoney(spent)}\n`
-      response += `Remaining: ${formatMoney(remaining)}\n\n`
-      response += remaining < 5000 ? '⚠️ Low balance!' : '✅ Good progress!'
-    }
-    // Weekend command
-    else if (command === 'weekend') {
-      response = `📅 <b>Weekend Tips</b>\n\n`
-      response += `• Set a weekend limit\n`
-      response += `• Track as you spend\n`
-      response += `• Avoid impulse purchases\n`
-      response += `• Suggested limit: ${formatMoney(2500)}`
-    }
-    // Morning command
-    else if (command === 'morning' || command === 'brief') {
-      const spent = await getMonthlySpent(profile)
-      const remaining = profile.personal_budget - spent
-      const daysLeft = 30 - new Date().getDate()
-      const dailySuggested = daysLeft > 0 ? Math.floor(remaining / daysLeft) : 0
+      response += `<b>Period:</b> ${format(fiscalStart, 'MMM d')} - ${format(fiscalEnd, 'MMM d')}\n`
+      response += `<b>Day ${daysPassed} of ${daysInFiscalMonth}</b>\n\n`
+      response += `<b>Budget:</b> ${formatMoney(budget)}\n`
+      response += `<b>Spent:</b> ${formatMoney(spent)}\n`
+      response += `<b>Remaining:</b> ${formatMoney(remaining)}\n\n`
       
-      response = `🌅 <b>Good Morning!</b>\n\n`
-      response += `Today's budget: ${formatMoney(dailySuggested)}\n`
-      response += `Month remaining: ${formatMoney(remaining)}\n`
-      response += `Days left: ${daysLeft}\n\n`
-      response += `Have a great day!`
+      response += `<b>Analysis:</b>\n`
+      response += `Daily average: ${formatMoney(dailyAverage)}\n`
+      response += `Target daily: ${formatMoney(dailyBudget)}\n`
+      response += `Days to payday: ${daysUntilPayday}\n\n`
+      
+      if (remaining <= 0) {
+        response += `🔴 Budget exhausted!`
+      } else if (dailyAverage > dailyBudget) {
+        const adjustedDaily = Math.floor(remaining / Math.max(daysUntilPayday, 1))
+        response += `⚠️ Overspending! Reduce to ${formatMoney(adjustedDaily)}/day`
+      } else {
+        response += `✅ On track! Keep it up!`
+      }
     }
-    // Evening command
-    else if (command === 'evening' || command === 'summary') {
-      const todayStart = startOfDay(new Date())
-      const todayEnd = endOfDay(new Date())
-      
-      const { data: expenses } = await supabase
-        .from('expenses')
-        .select('amount')
-        .eq('profile_id', profile.id)
-        .gte('expense_date', todayStart.toISOString())
-        .lte('expense_date', todayEnd.toISOString())
-      
-      const todayTotal = expenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0
-      
-      response = `🌙 <b>Evening Summary</b>\n\n`
-      response += `Today's spending: ${formatMoney(todayTotal)}\n`
-      response += `Expenses logged: ${expenses?.length || 0}\n\n`
-      response += `Great job tracking today!`
-    }
-    // Report command
+    // Report command - UPDATED
     else if (command === 'report') {
       const spent = await getMonthlySpent(profile)
-      const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
+      const budget = await getCurrentBudget(profile)
+      const remaining = budget - spent
+      
+      const { fiscalStart, fiscalEnd } = getFiscalMonthBounds(profile.salary_day || 7)
+      const daysPassed = Math.round((new Date().getTime() - fiscalStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+      const daysUntilPayday = getPaydayCountdown(profile.salary_day || 7)
+      
+      // Get week data (Monday-Sunday)
+      const today = new Date()
+      const currentWeekDay = today.getDay()
+      const daysToMonday = currentWeekDay === 0 ? 6 : currentWeekDay - 1
+      const weekStart = new Date(today)
+      weekStart.setDate(today.getDate() - daysToMonday)
+      weekStart.setHours(0, 0, 0, 0)
       
       const { data: weekExpenses } = await supabase
         .from('expenses')
@@ -392,85 +528,82 @@ export async function POST(request: NextRequest) {
       
       const weekTotal = weekExpenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0
       
+      // Get today data
+      const todayStart = startOfDay(new Date())
+      const todayEnd = endOfDay(new Date())
+      const { data: todayExpenses } = await supabase
+        .from('expenses')
+        .select('amount')
+        .eq('profile_id', profile.id)
+        .gte('expense_date', todayStart.toISOString())
+        .lte('expense_date', todayEnd.toISOString())
+      
+      const todayTotal = todayExpenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0
+      
+      const adjustedDailyBudget = remaining <= 0 ? 0 : Math.floor(remaining / Math.max(daysUntilPayday, 1))
+      
       response = `📋 <b>Detailed Report</b>\n\n`
-      response += `<b>This Month:</b>\n`
-      response += `• Spent: ${formatMoney(spent)}\n`
-      response += `• Remaining: ${formatMoney(profile.personal_budget - spent)}\n\n`
+      
+      response += `<b>Today:</b>\n`
+      response += `• Spent: ${formatMoney(todayTotal)}\n`
+      response += `• Can spend: ${formatMoney(Math.max(0, adjustedDailyBudget - todayTotal))}\n\n`
+      
       response += `<b>This Week:</b>\n`
-      response += `• Spent: ${formatMoney(weekTotal)}\n\n`
-      response += `Status: ${spent > profile.personal_budget * 0.8 ? '⚠️ High spending' : '✅ On track'}`
-    }
-    // Category commands
-    else if (command === 'food') {
-      response = await getCategoryReport(profile, 'Food')
-    }
-    else if (command === 'travel') {
-      response = await getCategoryReport(profile, 'Travel')
-    }
-    else if (command === 'drinks' || command === 'alcohol') {
-      response = await getCategoryReport(profile, 'Alcohol')
-    }
-    else if (command === 'misc' || command === 'miscellaneous') {
-      response = await getCategoryReport(profile, 'Miscellaneous')
-    }
-    else if (command === 'other') {
-      response = await getCategoryReport(profile, 'Other')
-    }
-    // Add command
-    else if (command === 'add') {
-      response = '💰 <b>Quick Add</b>\n\nChoose below or type:\n"200 lunch" or "coffee 50"'
-      useInline = true
+      response += `• Total: ${formatMoney(weekTotal)}\n\n`
+      
+      response += `<b>Fiscal Month:</b>\n`
+      response += `• Period: ${format(fiscalStart, 'MMM d')} - ${format(fiscalEnd, 'MMM d')}\n`
+      response += `• Day ${daysPassed} | ${daysUntilPayday} to payday\n`
+      response += `• Spent: ${formatMoney(spent)} / ${formatMoney(budget)}\n`
+      response += `• Remaining: ${formatMoney(remaining)}\n`
+      response += `• Daily limit: ${formatMoney(adjustedDailyBudget)}\n\n`
+      
+      if (remaining <= 0) {
+        response += `🔴 Over budget by ${formatMoney(Math.abs(remaining))}`
+      } else if (remaining < 5000) {
+        response += `⚠️ Low balance - be careful!`
+      } else {
+        response += `✅ Budget healthy`
+      }
     }
     // Help command
     else if (command === 'help' || command === '/help' || command === '/start') {
-      response = `👋 <b>Expense Tracker</b>\n\n`
+      response = `👋 <b>Expense Tracker Bot</b>\n\n`
       response += `<b>Commands:</b>\n`
       response += `• balance - Check remaining\n`
       response += `• today - Today's expenses\n`
-      response += `• yesterday - Yesterday's expenses\n`
-      response += `• week - Weekly report\n`
-      response += `• month - Monthly report\n`
-      response += `• report - Detailed report\n\n`
+      response += `• week - Weekly report (Mon-Sun)\n`
+      response += `• month - Fiscal month report\n`
+      response += `• report - Detailed overview\n\n`
       response += `<b>Add expense:</b>\n`
-      response += `Just type: "200 lunch" or "coffee 50"\n\n`
-      response += `<b>Categories:</b>\n`
-      response += `• food, travel, drinks, misc, other`
+      response += `Type: "200 lunch" or "coffee 50"\n\n`
+      response += `<b>Info:</b>\n`
+      response += `Fiscal month: Day ${profile.salary_day || 7} to Day ${(profile.salary_day || 7) - 1}`
       useKeyboard = true
     }
     // Try to parse as expense
     else {
-      // Check if it's "add X"
-      if (command.startsWith('add ')) {
-        const expenseText = text.substring(4)
-        const expense = parseExpense(expenseText)
-        if (expense) {
-          const success = await addExpense(profile, expense.amount, expense.description, detectCategory(expense.description))
-          if (success) {
-            const spent = await getMonthlySpent(profile)
-            const remaining = profile.personal_budget - spent
-            response = `✅ Added: ${expense.description} - ${formatMoney(expense.amount)}\n💰 Remaining: ${formatMoney(remaining)}`
-          } else {
-            response = '❌ Failed to add expense'
-          }
+      const expense = parseExpense(text)
+      if (expense) {
+        const success = await addExpense(profile, expense.amount, expense.description, detectCategory(expense.description))
+        if (success) {
+          const spent = await getMonthlySpent(profile)
+          const budget = await getCurrentBudget(profile)
+          const remaining = budget - spent
+          const daysUntilPayday = getPaydayCountdown(profile.salary_day || 7)
+          const adjustedDaily = remaining <= 0 ? 0 : Math.floor(remaining / Math.max(daysUntilPayday, 1))
+          
+          response = `✅ Added: ${expense.description} - ${formatMoney(expense.amount)}\n`
+          response += `💰 Remaining: ${formatMoney(remaining)}\n`
+          response += `📅 Can spend: ${formatMoney(adjustedDaily)}/day for ${daysUntilPayday} days`
         } else {
-          response = 'Invalid format. Try: "200 lunch"'
+          response = '❌ Failed to add expense'
         }
-      }
-      // Try direct expense parsing
-      else {
-        const expense = parseExpense(text)
-        if (expense) {
-          const success = await addExpense(profile, expense.amount, expense.description, detectCategory(expense.description))
-          if (success) {
-            const spent = await getMonthlySpent(profile)
-            const remaining = profile.personal_budget - spent
-            response = `✅ Added: ${expense.description} - ${formatMoney(expense.amount)}\n💰 Remaining: ${formatMoney(remaining)}`
-          } else {
-            response = '❌ Failed to add expense'
-          }
-        } else {
-          response = `Command not recognized: "${text}"\n\nType "help" for commands`
-        }
+      } else if (command === 'add') {
+        response = '💰 <b>Quick Add</b>\n\nChoose below or type:\n"200 lunch" or "coffee 50"'
+        useInline = true
+      } else {
+        response = `Unknown command: "${text}"\n\nType "help" for commands`
       }
     }
     
@@ -503,13 +636,13 @@ async function getCategoryReport(profile: any, categoryName: string): Promise<st
     return `Category "${categoryName}" not found`
   }
   
-  const monthStart = startOfMonth(new Date())
+  const { fiscalStart } = getFiscalMonthBounds(profile.salary_day || 7)
   const { data: expenses } = await supabase
     .from('expenses')
     .select('*')
     .eq('profile_id', profile.id)
     .eq('category_id', category.id)
-    .gte('expense_date', monthStart.toISOString())
+    .gte('expense_date', fiscalStart.toISOString())
     .limit(10)
   
   const total = expenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0
@@ -532,6 +665,6 @@ async function getCategoryReport(profile: any, categoryName: string): Promise<st
 export async function GET() {
   return NextResponse.json({ 
     status: 'Active',
-    version: '4.0 - Fixed keyboards'
+    version: '5.0 - Fiscal month & proper week support'
   })
 }

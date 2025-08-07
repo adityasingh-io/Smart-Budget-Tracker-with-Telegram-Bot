@@ -24,21 +24,32 @@ export default function MonthlySalaryManager() {
   const loadMonthlySalaries = async () => {
     setLoading(true)
     try {
-      const { data: profile } = await supabase
+      console.log('🔍 Loading monthly salaries - fetching profile...')
+      const { data: profile, error } = await supabase
         .from('profiles')
         .select('id')
         .single()
 
-      if (!profile) return
+      console.log('📊 Load salaries - Profile query result:', { profile, error })
+      
+      if (error) {
+        console.error('❌ Load salaries - Supabase error:', error)
+        return
+      }
 
-      const { data, error } = await supabase
+      if (!profile) {
+        console.log('⚠️ Load salaries - No profile found')
+        return
+      }
+
+      const { data, error: salaryError } = await supabase
         .from('monthly_salaries')
         .select('*')
         .eq('profile_id', profile.id)
         .order('month', { ascending: false })
         .limit(12) // Last 12 months
 
-      if (error) throw error
+      if (salaryError) throw salaryError
       setMonthlySalaries(data || [])
     } catch (error) {
       console.error('Error loading monthly salaries:', error)
@@ -51,12 +62,23 @@ export default function MonthlySalaryManager() {
   const handleSave = async () => {
     setLoading(true)
     try {
-      const { data: profile } = await supabase
+      console.log('🔍 Fetching profile from Supabase...')
+      const { data: profile, error } = await supabase
         .from('profiles')
         .select('id')
         .single()
 
-      if (!profile) throw new Error('Profile not found')
+      console.log('📊 Profile query result:', { profile, error })
+      
+      if (error) {
+        console.error('❌ Supabase error:', error)
+        throw new Error(`Database error: ${error.message}`)
+      }
+
+      if (!profile) {
+        console.log('⚠️ No profile found in database')
+        throw new Error('Profile not found')
+      }
 
       const monthDate = new Date(formData.month + '-01')
 

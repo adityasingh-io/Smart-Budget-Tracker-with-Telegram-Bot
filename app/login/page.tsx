@@ -221,15 +221,6 @@ export default function LoginPage() {
               </div>
             </form>
           )}
-
-          <div className="mt-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
-            <p className="text-sm text-yellow-800 dark:text-yellow-200">
-              <strong>First time?</strong> Default password is: <code className="font-mono">admin123</code>
-            </p>
-            <p className="text-xs mt-1 text-yellow-700 dark:text-yellow-300">
-              Please change it immediately after logging in!
-            </p>
-          </div>
         </div>
       </div>
     </div>
