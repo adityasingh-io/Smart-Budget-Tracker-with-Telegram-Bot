@@ -579,6 +579,7 @@ export async function POST(request: NextRequest) {
       response += `Type: "200 lunch" or "coffee 50"\n\n`
       response += `<b>Info:</b>\n`
       response += `Fiscal month: Day ${profile.salary_day || 7} to Day ${(profile.salary_day || 7) - 1}`
+      response += `<b>Visit App:</b> <a href="https://personal-expense-tracker-chi-six.vercel.app/">https://personal-expense-tracker-chi-six.vercel.app/</a>\n`
       useKeyboard = true
     }
     // Try to parse as expense
