@@ -1,153 +1,307 @@
-// app/test-telegram/page.tsx
 'use client'
 
 import { useState } from 'react'
-import { telegram } from '@/lib/telegram'
-import toast from 'react-hot-toast'
+
+type TestScenario = {
+  name: string
+  emoji: string
+  params: string
+  description: string
+}
+
+const scenarios: TestScenario[] = [
+  {
+    name: 'Morning Brief (9 AM)',
+    emoji: '🌅',
+    params: 'test=true&hour=9',
+    description: 'Tests the morning brief that normally runs at 9 AM IST'
+  },
+  {
+    name: 'Morning Brief (3:30 AM UTC)',
+    emoji: '🌄',
+    params: 'test=true&hour=3',
+    description: 'Tests the morning brief at UTC time'
+  },
+  {
+    name: 'Evening Report (8 PM)',
+    emoji: '🌙',
+    params: 'test=true&hour=20',
+    description: 'Tests the evening report that normally runs at 8 PM IST'
+  },
+  {
+    name: 'Evening Report (2:30 PM UTC)',
+    emoji: '🌆',
+    params: 'test=true&hour=14',
+    description: 'Tests the evening report at UTC time'
+  },
+  {
+    name: 'Weekend Alert (Friday 6 PM)',
+    emoji: '🎉',
+    params: 'test=true&hour=12&day=5',
+    description: 'Tests the Friday weekend spending alert'
+  },
+  {
+    name: 'Month-End Warning',
+    emoji: '⚠️',
+    params: 'test=true&hour=10&date=28',
+    description: 'Tests the month-end warning (28th of month)'
+  },
+  {
+    name: 'Current Time (No Override)',
+    emoji: '⏰',
+    params: '',
+    description: 'Tests with actual current time - may not trigger any message'
+  }
+]
 
 export default function TestTelegramPage() {
-  const [message, setMessage] = useState('')
-  const [sending, setSending] = useState(false)
+  const [results, setResults] = useState<Record<string, any>>({})
+  const [loading, setLoading] = useState<Record<string, boolean>>({})
+  const [cronSecret, setCronSecret] = useState('')
+  const [useProduction, setUseProduction] = useState(false)
+  const [customUrl, setCustomUrl] = useState('https://personal-expense-tracker-chi-six.vercel.app')
 
-  const testMessages = [
-    {
-      title: 'Test Connection',
-      message: '✅ Telegram bot connected successfully!\n\nYour expense tracker can now send you notifications.',
-    },
-    {
-      title: 'Daily Summary',
-      message: `📊 <b>Daily Summary</b>\n\n💰 Spent Today: ₹850\n💳 Remaining: ₹28,150\n🍽️ Food: ₹450\n🚗 Travel: ₹200\n📦 Misc: ₹200\n\n✅ You're within budget!`,
-    },
-    {
-      title: 'Morning Reminder',
-      message: `🌅 Good Morning!\n\n📊 Daily Budget: ₹1,167\n💰 Monthly Remaining: ₹28,150\n\nDon't forget to track your expenses today! 💪`,
-    },
-    {
-      title: 'Over Budget Alert',
-      message: `🚨 <b>Budget Alert!</b>\n\nYou've exceeded today's budget!\nSpent: ₹1,500 (Budget: ₹1,167)\n\nTry to save tomorrow to balance out.`,
-    },
-    {
-      title: 'Low Balance Warning',
-      message: `⚠️ <b>Low Balance!</b>\n\nOnly ₹3,500 remaining for 8 days.\nSuggested daily limit: ₹437\n\nBe careful with spending!`,
+  const getBaseUrl = () => {
+    if (customUrl) return customUrl
+    if (useProduction && window.location.hostname !== 'localhost') {
+      return `https://${window.location.hostname}`
     }
-  ]
+    return ''
+  }
 
-  const sendTestMessage = async (text: string) => {
-    setSending(true)
+  const testScenario = async (scenario: TestScenario) => {
+    if (!cronSecret) {
+      alert('Please enter your CRON_SECRET first!')
+      return
+    }
+
+    setLoading(prev => ({ ...prev, [scenario.name]: true }))
+    setResults(prev => ({ ...prev, [scenario.name]: null }))
+
     try {
-      const success = await telegram.sendMessage(text)
-      if (success) {
-        toast.success('Message sent! Check your Telegram.')
-      } else {
-        toast.error('Failed to send. Check your bot token and chat ID.')
-      }
+      const baseUrl = getBaseUrl()
+      const url = scenario.params 
+        ? `${baseUrl}/api/cron/reminders?${scenario.params}`
+        : `${baseUrl}/api/cron/reminders`
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${cronSecret}`
+        }
+      })
+
+      const data = await response.json()
+
+      setResults(prev => ({
+        ...prev,
+        [scenario.name]: {
+          success: response.ok,
+          status: response.status,
+          data
+        }
+      }))
     } catch (error) {
-      toast.error('Error sending message')
-      console.error(error)
+      setResults(prev => ({
+        ...prev,
+        [scenario.name]: {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }))
     } finally {
-      setSending(false)
+      setLoading(prev => ({ ...prev, [scenario.name]: false }))
     }
   }
 
-  const sendCustomMessage = async () => {
-    if (!message.trim()) {
-      toast.error('Please enter a message')
-      return
+  const testAll = async () => {
+    for (const scenario of scenarios) {
+      await testScenario(scenario)
+      await new Promise(resolve => setTimeout(resolve, 1000))
     }
-    await sendTestMessage(message)
-    setMessage('')
+  }
+
+  const getStatusColor = (result: any) => {
+    if (!result) return 'bg-gray-100'
+    if (result.success) return 'bg-green-100 border-green-300'
+    return 'bg-red-100 border-red-300'
+  }
+
+  const getStatusEmoji = (result: any) => {
+    if (!result) return '⏳'
+    if (result.success) return '✅'
+    return '❌'
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-8">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8 bg-gradient-to-r from-primary-500 to-secondary-500 bg-clip-text text-transparent">
-          Test Telegram Bot
+    <div className="min-h-screen bg-gray-50 p-8">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-4xl font-bold text-gray-900 mb-2">
+          🧪 Telegram Cron Job Tester
         </h1>
+        <p className="text-gray-600 mb-8">
+          Test your Telegram bot's scheduled messages without waiting for cron times
+        </p>
 
-        {/* Connection Status */}
-        <div className="card mb-6">
-          <h2 className="text-lg font-semibold mb-4">Connection Status</h2>
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="font-medium">Bot Token:</span>
-              <span className={process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN ? 'text-green-600' : 'text-red-600'}>
-                {process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN ? '✅ Configured' : '❌ Not set'}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="font-medium">Chat ID:</span>
-              <span className={process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID ? 'text-green-600' : 'text-red-600'}>
-                {process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID ? '✅ Configured' : '❌ Not set'}
-              </span>
-            </div>
-          </div>
+        <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+          <h2 className="text-xl font-semibold mb-4">⚙️ Configuration</h2>
           
-          {(!process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN || !process.env.NEXT_PUBLIC_TELEGRAM_CHAT_ID) && (
-            <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
-              <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                ⚠️ Add your bot token and chat ID to .env.local file
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                CRON_SECRET <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="password"
+                value={cronSecret}
+                onChange={(e) => setCronSecret(e.target.value)}
+                placeholder="Enter your CRON_SECRET from environment variables"
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                This should match the CRON_SECRET in your .env.local and Vercel environment
               </p>
             </div>
-          )}
-        </div>
 
-        {/* Test Messages */}
-        <div className="card mb-6">
-          <h2 className="text-lg font-semibold mb-4">Send Test Messages</h2>
-          <div className="grid gap-3">
-            {testMessages.map((test) => (
-              <div key={test.title} className="flex items-center justify-between p-3 border rounded-lg dark:border-gray-700">
-                <div>
-                  <h3 className="font-medium">{test.title}</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    {test.message.substring(0, 50)}...
-                  </p>
-                </div>
-                <button
-                  onClick={() => sendTestMessage(test.message)}
-                  disabled={sending}
-                  className="btn-primary px-4 py-2"
-                >
-                  {sending ? 'Sending...' : 'Send'}
-                </button>
-              </div>
-            ))}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Custom URL (Optional)
+              </label>
+              <input
+                type="text"
+                value={customUrl}
+                onChange={(e) => setCustomUrl(e.target.value)}
+                placeholder="https://your-app.vercel.app"
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Leave empty for local testing, or enter your Vercel deployment URL
+              </p>
+            </div>
+
+            <div className="flex items-center space-x-3">
+              <input
+                type="checkbox"
+                id="useProduction"
+                checked={useProduction}
+                onChange={(e) => setUseProduction(e.target.checked)}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              />
+              <label htmlFor="useProduction" className="text-sm text-gray-700">
+                Use production URL (when deployed)
+              </label>
+            </div>
           </div>
-        </div>
 
-        {/* Custom Message */}
-        <div className="card">
-          <h2 className="text-lg font-semibold mb-4">Send Custom Message</h2>
-          <div className="space-y-4">
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Type your message here... (HTML formatting supported)"
-              className="input w-full h-32 resize-none"
-            />
+          <div className="mt-6 flex gap-3">
             <button
-              onClick={sendCustomMessage}
-              disabled={sending || !message.trim()}
-              className="btn-primary"
+              onClick={testAll}
+              disabled={!cronSecret}
+              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
             >
-              {sending ? 'Sending...' : 'Send Custom Message'}
+              🚀 Test All Scenarios
+            </button>
+            <button
+              onClick={() => setResults({})}
+              className="px-6 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+            >
+              🔄 Clear Results
             </button>
           </div>
         </div>
 
-        {/* Instructions */}
-        <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-          <h3 className="font-semibold mb-2">📝 Setup Instructions</h3>
-          <ol className="text-sm space-y-1 list-decimal list-inside">
-            <li>Create bot with @BotFather on Telegram</li>
-            <li>Get your bot token</li>
-            <li>Send a message to your bot</li>
-            <li>Get your chat ID from the API</li>
-            <li>Add both to .env.local</li>
-            <li>Restart Next.js server</li>
-            <li>Test messages above</li>
-          </ol>
+        <div className="grid gap-4 md:grid-cols-2">
+          {scenarios.map((scenario) => (
+            <div
+              key={scenario.name}
+              className={`bg-white rounded-lg shadow-md p-6 border-2 transition-all ${getStatusColor(results[scenario.name])}`}
+            >
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <span className="text-2xl">{scenario.emoji}</span>
+                    {scenario.name}
+                  </h3>
+                  <p className="text-sm text-gray-600 mt-1">{scenario.description}</p>
+                  {scenario.params && (
+                    <code className="text-xs bg-gray-100 px-2 py-1 rounded mt-2 inline-block">
+                      {scenario.params}
+                    </code>
+                  )}
+                </div>
+                <span className="text-2xl">{getStatusEmoji(results[scenario.name])}</span>
+              </div>
+
+              <button
+                onClick={() => testScenario(scenario)}
+                disabled={!cronSecret || loading[scenario.name]}
+                className="w-full px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              >
+                {loading[scenario.name] ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Testing...
+                  </span>
+                ) : (
+                  'Test This Scenario'
+                )}
+              </button>
+
+              {results[scenario.name] && (
+                <div className="mt-4 pt-4 border-t">
+                  <div className="text-sm">
+                    <p className="font-medium mb-2">
+                      Status: {results[scenario.name].success ? 
+                        <span className="text-green-600">Success</span> : 
+                        <span className="text-red-600">Failed</span>
+                      }
+                      {results[scenario.name].status && (
+                        <span className="ml-2 text-gray-500">
+                          (HTTP {results[scenario.name].status})
+                        </span>
+                      )}
+                    </p>
+                    
+                    {results[scenario.name].data && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-blue-600 hover:text-blue-800">
+                          View Response Data
+                        </summary>
+                        <pre className="mt-2 p-3 bg-gray-50 rounded text-xs overflow-auto max-h-48">
+                          {JSON.stringify(results[scenario.name].data, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                    
+                    {results[scenario.name].error && (
+                      <p className="text-red-600 text-sm mt-2">
+                        Error: {results[scenario.name].error}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-8 bg-blue-50 rounded-lg p-6">
+          <h3 className="text-lg font-semibold mb-3">📝 Notes:</h3>
+          <ul className="space-y-2 text-sm text-gray-700">
+            <li>• Make sure your Telegram bot token and chat ID are configured in environment variables</li>
+            <li>• The test mode will actually send messages to your Telegram chat</li>
+            <li>• Check your Telegram to verify the messages are being received correctly</li>
+            <li>• Your actual cron schedules in vercel.json:
+              <ul className="ml-6 mt-1">
+                <li>- 3:30 AM UTC daily (9:00 AM IST)</li>
+                <li>- 2:30 PM UTC daily (8:00 PM IST)</li>
+              </ul>
+            </li>
+            <li>• View function logs in Vercel dashboard for debugging</li>
+          </ul>
         </div>
       </div>
     </div>
