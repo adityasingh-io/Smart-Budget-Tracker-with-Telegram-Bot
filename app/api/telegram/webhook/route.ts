@@ -1,4 +1,4 @@
-// app/api/telegram/webhook/route.ts - COMPLETE VERSION
+// app/api/telegram/webhook/route.ts - COMPLETE FIXED VERSION
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { format, subDays, startOfWeek, endOfWeek, startOfMonth, addDays, getDay } from 'date-fns'
@@ -132,14 +132,11 @@ async function generateMorningBrief(profile: any): Promise<string> {
   const daysLeft = 30 - new Date().getDate()
   const suggestedDaily = daysLeft > 0 ? Math.floor(remaining / daysLeft) : 0
   
-  // Get spending streak
   const streak = await getSpendingStreak(profile)
   
-  // Get this week's progress
   const weekSpent = await getWeeklySpent(profile)
   const weekBudget = dailyBudget * 7
   
-  // Determine tips based on patterns
   let tip = '💡 '
   const dayOfWeek = getDay(new Date())
   if (dayOfWeek === 5) {
@@ -195,14 +192,12 @@ async function generateEveningReport(profile: any): Promise<string> {
   const remaining = profile.personal_budget - monthSpent
   const daysLeft = 30 - today.getDate()
   
-  // Category breakdown
   const categoryTotals: Record<string, number> = {}
   todayExpenses?.forEach(e => {
     const cat = e.categories?.name || 'Other'
     categoryTotals[cat] = (categoryTotals[cat] || 0) + parseFloat(e.amount)
   })
   
-  // Generate expense list
   let expenseList = ''
   if (todayExpenses && todayExpenses.length > 0) {
     expenseList = todayExpenses.map(e => 
@@ -212,12 +207,10 @@ async function generateEveningReport(profile: any): Promise<string> {
     expenseList = '• No expenses logged today'
   }
   
-  // Category percentages
   const categoryBreakdown = Object.entries(categoryTotals)
     .map(([cat, amount]) => `${getCategoryEmoji(cat)} ${cat}: ${((amount/todayTotal)*100).toFixed(0)}%`)
     .join(' | ')
   
-  // Weekend warning
   let weekendWarning = ''
   if (getDay(today) === 5) {
     weekendWarning = '\n\n⚠️ <b>Weekend ahead!</b> You typically spend ₹2,500 on Saturdays.'
@@ -253,8 +246,6 @@ async function handleRecurringExpense(text: string, profile: any): Promise<strin
   const [_, name, amount, day] = match
   const dayOfMonth = day ? parseInt(day) : 1
   
-  // Store recurring expense (you'd need a recurring_expenses table)
-  // For now, we'll just acknowledge it
   return `📱 <b>Recurring Expense Set!</b>
 
 📝 <b>Name:</b> ${name}
@@ -272,23 +263,18 @@ Total monthly subscriptions: ₹${499 + parseInt(amount)}`
 
 // ============= ENHANCED CONVERSATION SAMPLES =============
 async function handleEnhancedConversation(text: string, profile: any): Promise<{ message: string, keyboard?: any }> {
-  // Parse the expense
   const expense = parseExpenseText(text)
   if (!expense) return { message: '' }
   
-  // Add to database (reuse existing function)
   const result = await addExpenseFromText(expense, profile)
   
-  // Get additional context
   const todayTotal = await getTodayTotal(profile)
   const categoryTotal = await getCategoryTotalToday(profile, expense.category)
   const dailyBudget = Math.floor(profile.personal_budget / 30)
   const categoryBudget = getCategoryDailyBudget(expense.category, dailyBudget)
   
-  // Build enhanced response
   let message = `✅ <b>Added ${expense.description}: ${formatCurrency(expense.amount)}</b>\n\n`
   
-  // Category analysis
   message += `📊 <b>${expense.category} Today:</b> ${formatCurrency(categoryTotal)}/${formatCurrency(categoryBudget)} `
   message += `(${((categoryTotal/categoryBudget)*100).toFixed(0)}% used`
   if (categoryTotal > categoryBudget) {
@@ -299,14 +285,11 @@ async function handleEnhancedConversation(text: string, profile: any): Promise<{
     message += ' ✅)\n\n'
   }
   
-  // Daily total
   message += `💰 <b>Total Today:</b> ${formatCurrency(todayTotal)}/${formatCurrency(dailyBudget)}\n`
   
-  // Week progress
   const weekTotal = await getWeeklySpent(profile)
   message += `📈 <b>This Week:</b> ${formatCurrency(weekTotal)}\n\n`
   
-  // Smart suggestion
   if (expense.category === 'Food' && categoryTotal > categoryBudget * 0.9) {
     message += '💡 <b>Tip:</b> Cook dinner at home tonight to stay within budget'
   } else if (todayTotal > dailyBudget) {
@@ -345,7 +328,6 @@ export async function POST(request: NextRequest) {
     const chatId = message?.chat?.id || callbackQuery?.message?.chat?.id
     const text = message?.text?.trim() || ''
     
-    // Get profile
     const { data: profile } = await supabase
       .from('profiles')
       .select('*')
@@ -356,7 +338,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true })
     }
     
-    // Handle callback queries (button presses)
     if (callbackQuery) {
       await handleCallbackQuery(callbackQuery, profile)
       return NextResponse.json({ ok: true })
@@ -365,40 +346,47 @@ export async function POST(request: NextRequest) {
     let responseText = ''
     let replyMarkup = null
     
-    // Check for recurring expense command
-    if (text.toLowerCase().startsWith('set ') || text.toLowerCase().startsWith('recurring ')) {
-      responseText = await handleRecurringExpense(text, profile)
+    // Check if it's a command first (before parsing as expense)
+    const isCommand = await handleCommand(text, profile)
+    
+    if (isCommand.handled) {
+      responseText = isCommand.message
+      replyMarkup = isCommand.keyboard || null
     }
-    // Check for natural language expense with enhanced conversation
-    else if (parseExpenseText(text)) {
-      const result = await handleEnhancedConversation(text, profile)
-      responseText = result.message
-      replyMarkup = result.keyboard
+    // Check for "add" prefix
+    else if (text.toLowerCase().startsWith('add ')) {
+      const expenseText = text.substring(4).trim()
+      const expense = parseExpenseText(expenseText)
+      if (expense) {
+        const result = await handleEnhancedConversation(expenseText, profile)
+        responseText = result.message
+        replyMarkup = result.keyboard
+      } else {
+        responseText = '💰 <b>Quick Add Expense</b>\n\nChoose an option or type your own:'
+        replyMarkup = getQuickAddKeyboard()
+      }
     }
     // Quick add menu
     else if (text.toLowerCase() === 'add' || text === '➕ Add Expense') {
       responseText = '💰 <b>Quick Add Expense</b>\n\nChoose an option or type your own:'
       replyMarkup = getQuickAddKeyboard()
     }
-    // Morning brief command
-    else if (text.toLowerCase() === 'morning' || text.toLowerCase() === 'brief') {
-      responseText = await generateMorningBrief(profile)
+    // Check for recurring expense command
+    else if (text.toLowerCase().startsWith('set ') || text.toLowerCase().startsWith('recurring ')) {
+      responseText = await handleRecurringExpense(text, profile)
     }
-    // Evening report command
-    else if (text.toLowerCase() === 'evening' || text.toLowerCase() === 'summary') {
-      responseText = await generateEveningReport(profile)
+    // Check for natural language expense
+    else if (parseExpenseText(text)) {
+      const result = await handleEnhancedConversation(text, profile)
+      responseText = result.message
+      replyMarkup = result.keyboard
     }
-    // All other existing commands...
+    // Default to help with main menu
     else {
-      // Handle all other commands (balance, today, week, etc.)
-      responseText = await handleExistingCommands(text, profile)
-      if (!responseText) {
-        responseText = getHelpMessage()
-        replyMarkup = getMainMenuKeyboard()
-      }
+      responseText = getHelpMessage()
+      replyMarkup = getMainMenuKeyboard()
     }
     
-    // Send response
     if (responseText) {
       await sendMessage(chatId, responseText, replyMarkup)
     }
@@ -409,6 +397,104 @@ export async function POST(request: NextRequest) {
     console.error('Webhook error:', error)
     return NextResponse.json({ ok: true })
   }
+}
+
+// ============= COMMAND HANDLER =============
+async function handleCommand(text: string, profile: any): Promise<{ handled: boolean; message?: string; keyboard?: any }> {
+  const lowerText = text.toLowerCase()
+  
+  // Remove emoji prefixes for command matching
+  const cleanText = lowerText
+    .replace('💰', '').replace('📊', '').replace('📈', '')
+    .replace('🍽️', '').replace('🚗', '').replace('📋', '')
+    .replace('⚙️', '').replace('💡', '').replace('➕', '')
+    .trim()
+  
+  // Balance commands
+  if (cleanText === 'balance' || cleanText === 'bal' || lowerText === '💰 balance') {
+    const result = await getBalanceReport(profile)
+    return { handled: true, message: result.message, keyboard: result.keyboard }
+  }
+  
+  // Today commands
+  if (cleanText === 'today' || lowerText === '📊 today') {
+    return { handled: true, message: await getTodayReport(profile) }
+  }
+  
+  // This Week commands
+  if (cleanText === 'week' || cleanText === 'weekly' || cleanText === 'this week' || lowerText === '📈 this week') {
+    return { handled: true, message: await getWeekReport(profile) }
+  }
+  
+  // Yesterday
+  if (cleanText === 'yesterday') {
+    return { handled: true, message: await getYesterdayReport(profile) }
+  }
+  
+  // Month
+  if (cleanText === 'month' || cleanText === 'monthly') {
+    return { handled: true, message: await getMonthReport(profile) }
+  }
+  
+  // Weekend
+  if (cleanText === 'weekend') {
+    return { handled: true, message: await getWeekendAnalysis(profile) }
+  }
+  
+  // Morning/Evening reports
+  if (cleanText === 'morning' || cleanText === 'brief') {
+    return { handled: true, message: await generateMorningBrief(profile) }
+  }
+  
+  if (cleanText === 'evening' || cleanText === 'summary') {
+    return { handled: true, message: await generateEveningReport(profile) }
+  }
+  
+  // Category commands
+  if (cleanText === 'food' || lowerText === '🍽️ food') {
+    return { handled: true, message: await getCategoryReport(profile, 'Food') }
+  }
+  
+  if (cleanText === 'travel' || lowerText === '🚗 travel') {
+    return { handled: true, message: await getCategoryReport(profile, 'Travel') }
+  }
+  
+  if (cleanText === 'alcohol' || cleanText === 'drinks') {
+    return { handled: true, message: await getCategoryReport(profile, 'Alcohol') }
+  }
+  
+  if (cleanText === 'misc' || cleanText === 'miscellaneous') {
+    return { handled: true, message: await getCategoryReport(profile, 'Miscellaneous') }
+  }
+  
+  if (cleanText === 'other') {
+    return { handled: true, message: await getCategoryReport(profile, 'Other') }
+  }
+  
+  // Report command
+  if (cleanText === 'report' || lowerText === '📋 report') {
+    return { handled: true, message: await getDetailedReport(profile) }
+  }
+  
+  // Settings
+  if (cleanText === 'settings' || lowerText === '⚙️ settings') {
+    return { 
+      handled: true, 
+      message: '⚙️ <b>Settings</b>\n\nComing soon!\n\n• Budget adjustment\n• Categories management\n• Notification preferences\n• Export data',
+      keyboard: getMainMenuKeyboard()
+    }
+  }
+  
+  // Help
+  if (cleanText === 'help' || cleanText === '/help' || cleanText === '/start' || lowerText === '💡 help') {
+    return { 
+      handled: true, 
+      message: getHelpMessage(),
+      keyboard: getMainMenuKeyboard()
+    }
+  }
+  
+  return { handled: false }
 }
 
 // ============= HELPER FUNCTIONS =============
@@ -541,672 +627,650 @@ function getYesterdayTopCategory(expenses: any[]): string {
   return top ? `${top[0]} (${formatCurrency(top[1])})` : 'No expenses'
 }
 
-// Add these helper functions to your telegram/webhook/route.ts file
-// (Continue from where the comment was)
-
-// ============= MISSING HELPER FUNCTIONS =============
-
 // Send message helper
 async function sendMessage(chatId: number, text: string, replyMarkup?: any) {
-    const token = process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN
-    
-    if (!token) {
-      console.error('Telegram bot token not configured')
-      return
-    }
-    
-    try {
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          parse_mode: 'HTML',
-          reply_markup: replyMarkup
-        })
-      })
-    } catch (error) {
-      console.error('Failed to send message:', error)
-    }
+  const token = process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN
+  
+  if (!token) {
+    console.error('Telegram bot token not configured')
+    return
   }
   
-  // Parse expense text
-  function parseExpenseText(text: string): { amount: number; description: string; category: string } | null {
-    for (const pattern of EXPENSE_PATTERNS) {
-      const match = text.match(pattern)
-      if (match) {
-        let amount = parseInt(match[1])
-        let description = match[2]
-        
-        if (isNaN(amount)) {
-          amount = parseInt(match[2])
-          description = match[1]
-        }
-        
-        if (!isNaN(amount) && description) {
-          const category = detectCategory(description)
-          return { amount, description: description.trim(), category }
-        }
-      }
-    }
-    
-    return null
-  }
-  
-  // Detect category from text
-  function detectCategory(text: string): string {
-    const lowerText = text.toLowerCase()
-    
-    for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-      if (keywords.some(keyword => lowerText.includes(keyword))) {
-        return category
-      }
-    }
-    
-    return 'Other'
-  }
-  
-  // Handle callback queries
-  async function handleCallbackQuery(query: any, profile: any) {
-    const chatId = query.message.chat.id
-    const data = query.data
-    
-    let responseText = ''
-    let replyMarkup = null
-    
-    // Quick add callbacks
-    if (data.startsWith('quick_')) {
-      const [_, amount, description] = data.split('_')
-      const expense = {
-        amount: parseInt(amount),
-        description,
-        category: detectCategory(description)
-      }
-      const result = await addExpenseFromText(expense, profile)
-      responseText = result.message
-      replyMarkup = result.keyboard
-    }
-    // Delete expense
-    else if (data.startsWith('delete_')) {
-      const expenseId = data.replace('delete_', '')
-      if (expenseId === 'last') {
-        // Delete last expense
-        const { data: lastExpense } = await supabase
-          .from('expenses')
-          .select('id')
-          .eq('profile_id', profile.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single()
-        
-        if (lastExpense) {
-          await supabase.from('expenses').delete().eq('id', lastExpense.id)
-          responseText = '✅ Last expense deleted successfully!'
-        }
-      } else {
-        await supabase.from('expenses').delete().eq('id', expenseId)
-        responseText = '✅ Expense deleted successfully!'
-      }
-    }
-    // Today's total
-    else if (data === 'today_total') {
-      responseText = await getTodayReport(profile)
-    }
-    // Balance
-    else if (data === 'balance') {
-      const result = await getBalanceReport(profile)
-      responseText = result.message
-      replyMarkup = result.keyboard
-    }
-    // Week summary
-    else if (data === 'week_summary') {
-      responseText = await getWeekReport(profile)
-    }
-    // Category reports
-    else if (data.startsWith('category_')) {
-      const category = data.replace('category_', '')
-      responseText = await getCategoryReport(profile, category)
-    }
-    // Full report
-    else if (data === 'full_report') {
-      responseText = await getDetailedReport(profile)
-    }
-    // Add expense
-    else if (data === 'add_expense') {
-      responseText = '💰 <b>Add New Expense</b>\n\nJust type the amount and description:\n\nExamples:\n• 200 lunch\n• coffee 50\n• spent 500 on drinks'
-      replyMarkup = getQuickAddKeyboard()
-    }
-    
-    // Answer callback query
-    await fetch(`https://api.telegram.org/bot${process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        callback_query_id: query.id,
-        text: 'Processing...'
+        chat_id: chatId,
+        text,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup
       })
     })
-    
-    // Send response
-    if (responseText) {
-      await sendMessage(chatId, responseText, replyMarkup)
-    }
+  } catch (error) {
+    console.error('Failed to send message:', error)
+  }
+}
+
+// Parse expense text - FIXED to avoid matching commands
+function parseExpenseText(text: string): { amount: number; description: string; category: string } | null {
+  // Don't parse single word commands
+  const commandWords = ['balance', 'bal', 'today', 'week', 'weekly', 'month', 'monthly', 
+                       'yesterday', 'weekend', 'food', 'travel', 'drinks', 'alcohol',
+                       'misc', 'miscellaneous', 'other', 'report', 'settings', 'help',
+                       'morning', 'evening', 'brief', 'summary', 'add']
+  
+  if (commandWords.includes(text.toLowerCase())) {
+    return null
   }
   
-  // Add expense from text
-  async function addExpenseFromText(data: { amount: number; description: string; category: string }, profile: any) {
-    const { data: category } = await supabase
-      .from('categories')
-      .select('id')
-      .eq('name', data.category)
-      .eq('profile_id', profile.id)
-      .single()
-    
-    const { error } = await supabase
-      .from('expenses')
-      .insert({
-        profile_id: profile.id,
-        category_id: category?.id,
-        amount: data.amount,
-        description: data.description,
-        expense_date: new Date().toISOString(),
-        tags: ['telegram'],
-        payment_method: 'cash'
-      })
-    
-    if (error) {
-      return {
-        message: '❌ Failed to add expense. Please try again.',
-        keyboard: null
+  for (const pattern of EXPENSE_PATTERNS) {
+    const match = text.match(pattern)
+    if (match) {
+      let amount = parseInt(match[1])
+      let description = match[2]
+      
+      if (isNaN(amount)) {
+        amount = parseInt(match[2])
+        description = match[1]
+      }
+      
+      if (!isNaN(amount) && description && amount > 0 && amount < 1000000) {
+        const category = detectCategory(description)
+        return { amount, description: description.trim(), category }
       }
     }
-    
-    const todayTotal = await getTodayTotal(profile)
-    const remaining = profile.personal_budget - (await getMonthlySpent(profile))
-    const dailyBudget = Math.floor(profile.personal_budget / 30)
-    
-    let statusEmoji = '✅'
-    let warningText = ''
-    
-    if (todayTotal > dailyBudget) {
-      statusEmoji = '⚠️'
-      warningText = `\n\n⚠️ <b>Over daily budget!</b>\nSpent: ${formatCurrency(todayTotal)} | Budget: ${formatCurrency(dailyBudget)}`
-    }
-    
-    if (remaining < 5000) {
-      warningText += `\n\n🔴 <b>Low balance alert!</b>\nOnly ${formatCurrency(remaining)} left!`
-    }
-    
-    const message = `${statusEmoji} <b>Expense Added!</b>
-  
-  ${getCategoryEmoji(data.category)} <b>Category:</b> ${data.category}
-  💰 <b>Amount:</b> ${formatCurrency(data.amount)}
-  📝 <b>Description:</b> ${data.description}
-  
-  📊 <b>Today's Total:</b> ${formatCurrency(todayTotal)}
-  💳 <b>Month Remaining:</b> ${formatCurrency(remaining)}${warningText}`
-    
-    const keyboard = getExpenseActionKeyboard('last')
-    
-    return { message, keyboard }
   }
   
-  // Get help message
-  function getHelpMessage(): string {
-    return `👋 <b>Expense Tracker Bot</b>
-  
-  <b>Natural Language:</b>
-  • "200 lunch" - Add lunch expense
-  • "spent 500 on drinks" - Add drinks
-  • "coffee 50" - Quick coffee entry
-  
-  <b>Commands:</b>
-  • <b>balance</b> - Check remaining budget
-  • <b>today</b> - Today's summary
-  • <b>yesterday</b> - Yesterday's report
-  • <b>week</b> - Weekly analysis
-  • <b>month</b> - Monthly overview
-  • <b>weekend</b> - Weekend spending
-  • <b>morning</b> - Morning brief
-  • <b>evening</b> - Evening report
-  • <b>food/travel/drinks/misc</b> - Category reports
-  
-  <b>Special:</b>
-  • "set netflix 499 monthly on 15" - Set recurring
-  • "paid 1200 dinner split with 3" - Split bills
-  
-  <b>Tips:</b>
-  • I understand natural language!
-  • Use buttons for quick actions
-  • Track as you spend for best results
-  
-  <i>Just start typing an amount to begin!</i>`
-  }
-  
-  // Handle existing commands (all the command handlers)
-  async function handleExistingCommands(text: string, profile: any): Promise<string> {
-    const lowerText = text.toLowerCase()
-    
-    // Balance
-    if (lowerText === 'balance' || lowerText === 'bal') {
-      const result = await getBalanceReport(profile)
-      return result.message
-    }
-    // Today
-    else if (lowerText === 'today') {
-      return await getTodayReport(profile)
-    }
-    // Yesterday
-    else if (lowerText === 'yesterday') {
-      return await getYesterdayReport(profile)
-    }
-    // Week
-    else if (lowerText === 'week' || lowerText === 'weekly') {
-      return await getWeekReport(profile)
-    }
-    // Month
-    else if (lowerText === 'month' || lowerText === 'monthly') {
-      return await getMonthReport(profile)
-    }
-    // Weekend
-    else if (lowerText === 'weekend') {
-      return await getWeekendAnalysis(profile)
-    }
-    // Help
-    else if (lowerText === 'help' || lowerText === '/help' || lowerText === '/start') {
-      return getHelpMessage()
-    }
-    
-    return ''
-  }
-  
-  // Get today's report
-  async function getTodayReport(profile: any): Promise<string> {
-    const today = new Date()
-    const { data: expenses } = await supabase
-      .from('expenses')
-      .select('*, categories(name)')
-      .eq('profile_id', profile.id)
-      .gte('expense_date', `${format(today, 'yyyy-MM-dd')}T00:00:00`)
-      .lte('expense_date', `${format(today, 'yyyy-MM-dd')}T23:59:59`)
-      .order('expense_date', { ascending: false })
-    
-    const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
-    const dailyBudget = Math.floor(profile.personal_budget / 30)
-    
-    if (!expenses || expenses.length === 0) {
-      return `📊 <b>Today's Report</b>
-  
-  ✨ No expenses yet today!
-  
-  💰 Daily Budget: ${formatCurrency(dailyBudget)}
-  
-  <i>Start tracking by typing: "100 coffee"</i>`
-    }
-    
-    const expenseList = expenses.map(e => 
-      `• ${getCategoryEmoji(e.categories?.name)} ${e.description}: ${formatCurrency(e.amount)}`
-    ).join('\n')
-    
-    return `📊 <b>Today's Report</b>
-  
-  ${expenseList}
-  
-  ${getVisualSeparator()}
-  <b>Total:</b> ${formatCurrency(total)}/${formatCurrency(dailyBudget)}
-  ${getProgressBar(total, dailyBudget)} ${((total/dailyBudget)*100).toFixed(0)}%
-  
-  ${total > dailyBudget ? '⚠️ Over budget!' : '✅ Within budget!'}`
-  }
-  
-  // Get yesterday's report
-  async function getYesterdayReport(profile: any): Promise<string> {
-    const yesterday = subDays(new Date(), 1)
-    const { data: expenses } = await supabase
-      .from('expenses')
-      .select('*, categories(name)')
-      .eq('profile_id', profile.id)
-      .gte('expense_date', `${format(yesterday, 'yyyy-MM-dd')}T00:00:00`)
-      .lte('expense_date', `${format(yesterday, 'yyyy-MM-dd')}T23:59:59`)
-    
-    const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
-    const dailyBudget = Math.floor(profile.personal_budget / 30)
-    
-    if (!expenses || expenses.length === 0) {
-      return `📊 <b>Yesterday's Report</b>
-  
-  ✨ No expenses recorded yesterday!`
-    }
-    
-    // Category breakdown
-    const categoryTotals: Record<string, number> = {}
-    expenses.forEach(e => {
-      const cat = e.categories?.name || 'Other'
-      categoryTotals[cat] = (categoryTotals[cat] || 0) + parseFloat(e.amount)
-    })
-    
-    const categoryList = Object.entries(categoryTotals)
-      .map(([cat, amount]) => `${getCategoryEmoji(cat)} ${cat}: ${formatCurrency(amount)}`)
-      .join('\n')
-    
-    return `📊 <b>Yesterday's Report</b>
-  
-  <b>Categories:</b>
-  ${categoryList}
-  
-  ${getVisualSeparator()}
-  <b>Total:</b> ${formatCurrency(total)}
-  <b>Budget:</b> ${formatCurrency(dailyBudget)}
-  <b>Status:</b> ${total <= dailyBudget ? '✅ Under budget' : `⚠️ Over by ${formatCurrency(total - dailyBudget)}`}`
-  }
-  
-  // Get week report
-  async function getWeekReport(profile: any): Promise<string> {
-    const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
-    const { data: expenses } = await supabase
-      .from('expenses')
-      .select('*, categories(name)')
-      .eq('profile_id', profile.id)
-      .gte('expense_date', weekStart.toISOString())
-    
-    const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
-    const weekBudget = Math.floor(profile.personal_budget / 30) * 7
-    
-    // Daily breakdown
-    const dailyTotals: Record<string, number> = {}
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-    
-    expenses?.forEach(e => {
-      const day = format(new Date(e.expense_date), 'EEE')
-      dailyTotals[day] = (dailyTotals[day] || 0) + parseFloat(e.amount)
-    })
-    
-    const dailyBreakdown = days.map(day => {
-      const amount = dailyTotals[day] || 0
-      const bar = getProgressBar(amount, Math.floor(weekBudget / 7), 8)
-      return `${day}: ${bar} ${formatCurrency(amount)}`
-    }).join('\n')
-    
-    return `📈 <b>Weekly Report</b>
-  
-  <b>Daily Breakdown:</b>
-  ${dailyBreakdown}
-  
-  ${getVisualSeparator()}
-  <b>Week Total:</b> ${formatCurrency(total)}/${formatCurrency(weekBudget)}
-  ${getProgressBar(total, weekBudget)} ${((total/weekBudget)*100).toFixed(0)}%
-  
-  <b>Daily Average:</b> ${formatCurrency(Math.floor(total / 7))}
-  <b>Status:</b> ${total <= weekBudget ? '✅ On track!' : '⚠️ Over budget!'}`
-  }
-  
-  // Get month report
-  async function getMonthReport(profile: any): Promise<string> {
-    const monthStart = startOfMonth(new Date())
-    const { data: expenses } = await supabase
-      .from('expenses')
-      .select('*, categories(name)')
-      .eq('profile_id', profile.id)
-      .gte('expense_date', monthStart.toISOString())
-    
-    const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
-    const remaining = profile.personal_budget - total
-    const daysInMonth = 30
-    const daysPassed = new Date().getDate()
-    const daysLeft = daysInMonth - daysPassed
-    
-    // Category breakdown
-    const categoryTotals: Record<string, number> = {}
-    expenses?.forEach(e => {
-      const cat = e.categories?.name || 'Other'
-      categoryTotals[cat] = (categoryTotals[cat] || 0) + parseFloat(e.amount)
-    })
-    
-    const topCategories = Object.entries(categoryTotals)
-      .sort(([,a], [,b]) => b - a)
-      .slice(0, 3)
-      .map(([cat, amount]) => `${getCategoryEmoji(cat)} ${cat}: ${formatCurrency(amount)}`)
-      .join('\n')
-    
-    return `📊 <b>Monthly Report</b>
-  
-  <b>Progress:</b> Day ${daysPassed} of ${daysInMonth}
-  
-  <b>Budget Status:</b>
-  ${getProgressBar(total, profile.personal_budget, 20)}
-  ${formatCurrency(total)} / ${formatCurrency(profile.personal_budget)} (${((total/profile.personal_budget)*100).toFixed(0)}%)
-  
-  <b>Top Categories:</b>
-  ${topCategories}
-  
-  ${getVisualSeparator()}
-  💰 <b>Remaining:</b> ${formatCurrency(remaining)}
-  📅 <b>Days Left:</b> ${daysLeft}
-  📊 <b>Suggested Daily:</b> ${formatCurrency(Math.floor(remaining / daysLeft))}
-  
-  ${remaining < 5000 ? '⚠️ Low balance - spend carefully!' : '✅ Good progress - keep it up!'}`
-  }
-  
-  // Get weekend analysis
-  async function getWeekendAnalysis(profile: any): Promise<string> {
-    // Get last weekend expenses
-    const lastSaturday = subDays(new Date(), getDay(new Date()) + 1)
-    const lastSunday = addDays(lastSaturday, 1)
-    
-    const { data: lastWeekend } = await supabase
-      .from('expenses')
-      .select('amount')
-      .eq('profile_id', profile.id)
-      .gte('expense_date', format(lastSaturday, 'yyyy-MM-dd'))
-      .lte('expense_date', format(lastSunday, 'yyyy-MM-dd'))
-    
-    const lastWeekendTotal = lastWeekend?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
-    
-    // Get weekday average
-    const weekdayExpenses = await getWeekdayAverage(profile)
-    const weekendAverage = lastWeekendTotal / 2
-    const difference = ((weekendAverage - weekdayExpenses) / weekdayExpenses * 100).toFixed(0)
-    
-    return `📅 <b>Weekend Analysis</b>
-  
-  <b>Last Weekend:</b>
-  • Saturday: ${formatCurrency(lastWeekendTotal * 0.6)} (estimated)
-  • Sunday: ${formatCurrency(lastWeekendTotal * 0.4)} (estimated)
-  • Total: ${formatCurrency(lastWeekendTotal)}
-  
-  <b>Comparison:</b>
-  • Weekday avg: ${formatCurrency(weekdayExpenses)}/day
-  • Weekend avg: ${formatCurrency(weekendAverage)}/day
-  • Difference: ${difference}% higher
-  
-  ${getVisualSeparator()}
-  💡 <b>Tips for this weekend:</b>
-  • Set limit: ${formatCurrency(Math.min(2500, profile.personal_budget * 0.1))}
-  • Avoid impulse purchases
-  • Plan activities in advance
-  • Track as you spend`
-  }
-  
-  // Get category report
-  async function getCategoryReport(profile: any, categoryName: string): Promise<string> {
-    const { data: category } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('name', categoryName)
-      .eq('profile_id', profile.id)
-      .single()
-    
-    if (!category) {
-      return `❌ Category "${categoryName}" not found`
-    }
-    
-    const monthStart = startOfMonth(new Date())
-    const { data: expenses } = await supabase
-      .from('expenses')
-      .select('*')
-      .eq('profile_id', profile.id)
-      .eq('category_id', category.id)
-      .gte('expense_date', monthStart.toISOString())
-      .order('expense_date', { ascending: false })
-      .limit(10)
-    
-    const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
-    const budget = category.budget_amount || 0
-    
-    const recentList = expenses?.slice(0, 5).map(e => 
-      `• ${format(new Date(e.expense_date), 'MMM d')}: ${formatCurrency(e.amount)} - ${e.description}`
-    ).join('\n') || 'No expenses yet'
-    
-    return `${getCategoryEmoji(categoryName)} <b>${categoryName} Report</b>
-  
-  <b>This Month:</b>
-  ${getProgressBar(total, budget, 15)}
-  ${formatCurrency(total)} / ${formatCurrency(budget)} (${((total/budget)*100).toFixed(0)}%)
-  
-  <b>Recent Expenses:</b>
-  ${recentList}
-  
-  ${getVisualSeparator()}
-  <b>Daily Average:</b> ${formatCurrency(Math.floor(total / new Date().getDate()))}
-  <b>Remaining:</b> ${formatCurrency(budget - total)}
-  <b>Status:</b> ${total > budget ? '⚠️ Over budget!' : '✅ Within budget'}`
-  }
-  
-  // Get detailed report
-  async function getDetailedReport(profile: any): Promise<string> {
-    const monthSpent = await getMonthlySpent(profile)
-    const weekSpent = await getWeeklySpent(profile)
-    const todaySpent = await getTodayTotal(profile)
-    const remaining = profile.personal_budget - monthSpent
-    
-    return `📋 <b>Detailed Financial Report</b>
-  
-  ${getVisualSeparator()}
-  <b>📊 Overview:</b>
-  • Today: ${formatCurrency(todaySpent)}
-  • This Week: ${formatCurrency(weekSpent)}
-  • This Month: ${formatCurrency(monthSpent)}
-  • Remaining: ${formatCurrency(remaining)}
-  
-  ${getVisualSeparator()}
-  <b>📈 Progress:</b>
-  Month: ${getProgressBar(monthSpent, profile.personal_budget)}
-  Week: ${getProgressBar(weekSpent, Math.floor(profile.personal_budget/4))}
-  Today: ${getProgressBar(todaySpent, Math.floor(profile.personal_budget/30))}
-  
-  ${getVisualSeparator()}
-  <b>💡 Insights:</b>
-  • Daily Average: ${formatCurrency(Math.floor(monthSpent / new Date().getDate()))}
-  • Projected Month: ${formatCurrency(Math.floor(monthSpent / new Date().getDate() * 30))}
-  • Status: ${remaining > 10000 ? '✅ Healthy' : remaining > 5000 ? '🟡 Caution' : '🔴 Critical'}
-  
-  <i>Use category commands (food, travel, etc.) for detailed breakdowns</i>`
-  }
-  
-  // Get weekday average
-  async function getWeekdayAverage(profile: any): Promise<number> {
-    const lastMonday = subDays(new Date(), getDay(new Date()) + 6)
-    const lastFriday = addDays(lastMonday, 4)
-    
-    const { data } = await supabase
-      .from('expenses')
-      .select('amount')
-      .eq('profile_id', profile.id)
-      .gte('expense_date', format(lastMonday, 'yyyy-MM-dd'))
-      .lte('expense_date', format(lastFriday, 'yyyy-MM-dd'))
-    
-    const total = data?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
-    return total / 5
-  }
+  return null
+}
 
-  // Get balance report
-async function getBalanceReport(profile: any): Promise<{ message: string; keyboard?: any }> {
-    const monthSpent = await getMonthlySpent(profile)
-    const remaining = profile.personal_budget - monthSpent
-    const dailyBudget = Math.floor(profile.personal_budget / 30)
-    const daysInMonth = 30
-    const daysPassed = new Date().getDate()
-    const daysLeft = daysInMonth - daysPassed
-    const suggestedDaily = daysLeft > 0 ? Math.floor(remaining / daysLeft) : 0
-    
-    const weekSpent = await getWeeklySpent(profile)
-    const todaySpent = await getTodayTotal(profile)
-    
-    const spendingPace = Math.floor(monthSpent / daysPassed)
-    const projectedMonthEnd = spendingPace * daysInMonth
-    const projectedSavings = profile.personal_budget - projectedMonthEnd
-    
-    let statusEmoji = '💚'
-    let statusText = 'Excellent!'
-    let advice = '✨ Keep up the great work!'
-    
-    if (remaining < 3000) {
-      statusEmoji = '🔴'
-      statusText = 'Critical!'
-      advice = '⚠️ Only essential expenses recommended'
-    } else if (remaining < 7000) {
-      statusEmoji = '🟡'
-      statusText = 'Caution'
-      advice = '💡 Be mindful of spending'
-    } else if (remaining < 15000) {
-      statusEmoji = '🟢'
-      statusText = 'Good'
-      advice = '👍 You\'re doing well'
+// Detect category from text
+function detectCategory(text: string): string {
+  const lowerText = text.toLowerCase()
+  
+  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+    if (keywords.some(keyword => lowerText.includes(keyword))) {
+      return category
     }
-    
-    const percentUsed = ((monthSpent / profile.personal_budget) * 100).toFixed(1)
-    const percentRemaining = ((remaining / profile.personal_budget) * 100).toFixed(1)
-    
-    const message = `💰 <b>Balance Report</b>
-  
-  ${getVisualSeparator()}
-  <b>Month Status:</b> ${statusEmoji} ${statusText}
-  
-  <b>Budget:</b> ${formatCurrency(profile.personal_budget)}
-  <b>Spent:</b> ${formatCurrency(monthSpent)} (${percentUsed}%)
-  <b>Remaining:</b> ${formatCurrency(remaining)} (${percentRemaining}%)
-  
-  ${getProgressBar(monthSpent, profile.personal_budget, 20)}
-  
-  ${getVisualSeparator()}
-  📊 <b>Spending Breakdown:</b>
-  - Today: ${formatCurrency(todaySpent)} ${todaySpent > dailyBudget ? '⚠️' : '✅'}
-  - This Week: ${formatCurrency(weekSpent)}
-  - Daily Average: ${formatCurrency(spendingPace)}
-  
-  ${getVisualSeparator()}
-  📅 <b>Time Analysis:</b>
-  - Days Passed: ${daysPassed}/${daysInMonth}
-  - Days Left: ${daysLeft}
-  - Suggested Daily: ${formatCurrency(suggestedDaily)}
-  
-  ${getVisualSeparator()}
-  📈 <b>Projections:</b>
-  - Month-end Total: ${formatCurrency(projectedMonthEnd)}
-  - Expected ${projectedSavings >= 0 ? 'Savings' : 'Overspend'}: ${formatCurrency(Math.abs(projectedSavings))}
-  
-  ${getVisualSeparator()}
-  ${advice}
-  
-  ${remaining < 5000 ? '\n🔔 <b>Alert:</b> Consider postponing non-essential purchases' : ''}
-  ${suggestedDaily < 500 ? '\n⚠️ <b>Warning:</b> Very tight daily budget ahead!' : ''}`
-  
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: '📊 Today', callback_data: 'today_total' },
-          { text: '📈 Week', callback_data: 'week_summary' }
-        ],
-        [
-          { text: '📋 Full Report', callback_data: 'full_report' },
-          { text: '➕ Add Expense', callback_data: 'add_expense' }
-        ]
-      ]
-    }
-    
-    return { message, keyboard }
   }
+  
+  return 'Other'
+}
+
+// Handle callback queries - FIXED for all buttons
+async function handleCallbackQuery(query: any, profile: any) {
+  const chatId = query.message.chat.id
+  const data = query.data
+  
+  let responseText = ''
+  let replyMarkup = null
+  
+  // Quick add callbacks
+  if (data.startsWith('quick_')) {
+    const [_, amount, description] = data.split('_')
+    const expense = {
+      amount: parseInt(amount),
+      description,
+      category: detectCategory(description)
+    }
+    const result = await addExpenseFromText(expense, profile)
+    responseText = result.message
+    replyMarkup = result.keyboard
+  }
+  // Delete expense
+  else if (data.startsWith('delete_')) {
+    const expenseId = data.replace('delete_', '')
+    if (expenseId === 'last') {
+      const { data: lastExpense } = await supabase
+        .from('expenses')
+        .select('id')
+        .eq('profile_id', profile.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      
+      if (lastExpense) {
+        await supabase.from('expenses').delete().eq('id', lastExpense.id)
+        responseText = '✅ Last expense deleted successfully!'
+      }
+    } else {
+      await supabase.from('expenses').delete().eq('id', expenseId)
+      responseText = '✅ Expense deleted successfully!'
+    }
+  }
+  // Edit expense
+  else if (data.startsWith('edit_')) {
+    responseText = '✏️ <b>Edit Expense</b>\n\nTo edit, delete this expense and add a new one with the correct details.'
+    replyMarkup = getMainMenuKeyboard()
+  }
+  // Tag expense
+  else if (data.startsWith('tag_')) {
+    responseText = '🏷️ <b>Tag Feature</b>\n\nComing soon! You\'ll be able to add custom tags to categorize expenses better.'
+    replyMarkup = getMainMenuKeyboard()
+  }
+  // Today's total
+  else if (data === 'today_total') {
+    responseText = await getTodayReport(profile)
+  }
+  // Balance
+  else if (data === 'balance') {
+    const result = await getBalanceReport(profile)
+    responseText = result.message
+    replyMarkup = result.keyboard
+  }
+  // Week summary
+  else if (data === 'week_summary') {
+    responseText = await getWeekReport(profile)
+  }
+  // Category reports
+  else if (data.startsWith('category_')) {
+    const category = data.replace('category_', '')
+    responseText = await getCategoryReport(profile, category)
+  }
+  // Full report
+  else if (data === 'full_report') {
+    responseText = await getDetailedReport(profile)
+  }
+  // Add expense
+  else if (data === 'add_expense') {
+    responseText = '💰 <b>Add New Expense</b>\n\nJust type the amount and description:\n\nExamples:\n• 200 lunch\n• coffee 50\n• spent 500 on drinks'
+    replyMarkup = getQuickAddKeyboard()
+  }
+  
+  // Answer callback query to remove loading state
+  await fetch(`https://api.telegram.org/bot${process.env.NEXT_PUBLIC_TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      callback_query_id: query.id,
+      text: 'Processing...'
+    })
+  })
+  
+  if (responseText) {
+    await sendMessage(chatId, responseText, replyMarkup)
+  }
+}
+
+// Add expense from text
+async function addExpenseFromText(data: { amount: number; description: string; category: string }, profile: any) {
+  const { data: category } = await supabase
+    .from('categories')
+    .select('id')
+    .eq('name', data.category)
+    .eq('profile_id', profile.id)
+    .single()
+  
+  const { error } = await supabase
+    .from('expenses')
+    .insert({
+      profile_id: profile.id,
+      category_id: category?.id,
+      amount: data.amount,
+      description: data.description,
+      expense_date: new Date().toISOString(),
+      tags: ['telegram'],
+      payment_method: 'cash'
+    })
+  
+  if (error) {
+    return {
+      message: '❌ Failed to add expense. Please try again.',
+      keyboard: null
+    }
+  }
+  
+  const todayTotal = await getTodayTotal(profile)
+  const remaining = profile.personal_budget - (await getMonthlySpent(profile))
+  const dailyBudget = Math.floor(profile.personal_budget / 30)
+  
+  let statusEmoji = '✅'
+  let warningText = ''
+  
+  if (todayTotal > dailyBudget) {
+    statusEmoji = '⚠️'
+    warningText = `\n\n⚠️ <b>Over daily budget!</b>\nSpent: ${formatCurrency(todayTotal)} | Budget: ${formatCurrency(dailyBudget)}`
+  }
+  
+  if (remaining < 5000) {
+    warningText += `\n\n🔴 <b>Low balance alert!</b>\nOnly ${formatCurrency(remaining)} left!`
+  }
+  
+  const message = `${statusEmoji} <b>Expense Added!</b>
+
+${getCategoryEmoji(data.category)} <b>Category:</b> ${data.category}
+💰 <b>Amount:</b> ${formatCurrency(data.amount)}
+📝 <b>Description:</b> ${data.description}
+
+📊 <b>Today's Total:</b> ${formatCurrency(todayTotal)}
+💳 <b>Month Remaining:</b> ${formatCurrency(remaining)}${warningText}`
+  
+  const keyboard = getExpenseActionKeyboard('last')
+  
+  return { message, keyboard }
+}
+
+// Get help message
+function getHelpMessage(): string {
+  return `👋 <b>Expense Tracker Bot</b>
+
+<b>Natural Language:</b>
+• "200 lunch" - Add lunch expense
+• "spent 500 on drinks" - Add drinks
+• "coffee 50" - Quick coffee entry
+• "add food 300" - Add with category
+
+<b>Commands:</b>
+• <b>balance</b> - Check remaining budget
+• <b>today</b> - Today's summary
+• <b>yesterday</b> - Yesterday's report
+• <b>week</b> - Weekly analysis
+• <b>month</b> - Monthly overview
+• <b>weekend</b> - Weekend spending
+• <b>morning</b> - Morning brief
+• <b>evening</b> - Evening report
+
+<b>Categories:</b>
+• <b>food</b> - Food expenses report
+• <b>travel</b> - Travel expenses report
+• <b>drinks/alcohol</b> - Drinks report
+• <b>misc</b> - Miscellaneous report
+• <b>other</b> - Other expenses
+
+<b>Special:</b>
+• "set netflix 499 monthly on 15" - Set recurring
+• "paid 1200 dinner split with 3" - Split bills
+
+<b>Tips:</b>
+• Use the keyboard buttons below for quick access
+• Track as you spend for best results
+• Check your balance daily
+
+<i>Just start typing an amount to begin!</i>`
+}
+
+// Get today's report
+async function getTodayReport(profile: any): Promise<string> {
+  const today = new Date()
+  const { data: expenses } = await supabase
+    .from('expenses')
+    .select('*, categories(name)')
+    .eq('profile_id', profile.id)
+    .gte('expense_date', `${format(today, 'yyyy-MM-dd')}T00:00:00`)
+    .lte('expense_date', `${format(today, 'yyyy-MM-dd')}T23:59:59`)
+    .order('expense_date', { ascending: false })
+  
+  const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
+  const dailyBudget = Math.floor(profile.personal_budget / 30)
+  
+  if (!expenses || expenses.length === 0) {
+    return `📊 <b>Today's Report</b>
+
+✨ No expenses yet today!
+
+💰 Daily Budget: ${formatCurrency(dailyBudget)}
+
+<i>Start tracking by typing: "100 coffee"</i>`
+  }
+  
+  const expenseList = expenses.map(e => 
+    `• ${getCategoryEmoji(e.categories?.name)} ${e.description}: ${formatCurrency(e.amount)}`
+  ).join('\n')
+  
+  return `📊 <b>Today's Report</b>
+
+${expenseList}
+
+${getVisualSeparator()}
+<b>Total:</b> ${formatCurrency(total)}/${formatCurrency(dailyBudget)}
+${getProgressBar(total, dailyBudget)} ${((total/dailyBudget)*100).toFixed(0)}%
+
+${total > dailyBudget ? '⚠️ Over budget!' : '✅ Within budget!'}`
+}
+
+// Get yesterday's report
+async function getYesterdayReport(profile: any): Promise<string> {
+  const yesterday = subDays(new Date(), 1)
+  const { data: expenses } = await supabase
+    .from('expenses')
+    .select('*, categories(name)')
+    .eq('profile_id', profile.id)
+    .gte('expense_date', `${format(yesterday, 'yyyy-MM-dd')}T00:00:00`)
+    .lte('expense_date', `${format(yesterday, 'yyyy-MM-dd')}T23:59:59`)
+  
+  const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
+  const dailyBudget = Math.floor(profile.personal_budget / 30)
+  
+  if (!expenses || expenses.length === 0) {
+    return `📊 <b>Yesterday's Report</b>
+
+✨ No expenses recorded yesterday!`
+  }
+  
+  const categoryTotals: Record<string, number> = {}
+  expenses.forEach(e => {
+    const cat = e.categories?.name || 'Other'
+    categoryTotals[cat] = (categoryTotals[cat] || 0) + parseFloat(e.amount)
+  })
+  
+  const categoryList = Object.entries(categoryTotals)
+    .map(([cat, amount]) => `${getCategoryEmoji(cat)} ${cat}: ${formatCurrency(amount)}`)
+    .join('\n')
+  
+  return `📊 <b>Yesterday's Report</b>
+
+<b>Categories:</b>
+${categoryList}
+
+${getVisualSeparator()}
+<b>Total:</b> ${formatCurrency(total)}
+<b>Budget:</b> ${formatCurrency(dailyBudget)}
+<b>Status:</b> ${total <= dailyBudget ? '✅ Under budget' : `⚠️ Over by ${formatCurrency(total - dailyBudget)}`}`
+}
+
+// Get week report
+async function getWeekReport(profile: any): Promise<string> {
+  const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
+  const { data: expenses } = await supabase
+    .from('expenses')
+    .select('*, categories(name)')
+    .eq('profile_id', profile.id)
+    .gte('expense_date', weekStart.toISOString())
+  
+  const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
+  const weekBudget = Math.floor(profile.personal_budget / 30) * 7
+  
+  const dailyTotals: Record<string, number> = {}
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  
+  expenses?.forEach(e => {
+    const day = format(new Date(e.expense_date), 'EEE')
+    dailyTotals[day] = (dailyTotals[day] || 0) + parseFloat(e.amount)
+  })
+  
+  const dailyBreakdown = days.map(day => {
+    const amount = dailyTotals[day] || 0
+    const bar = getProgressBar(amount, Math.floor(weekBudget / 7), 8)
+    return `${day}: ${bar} ${formatCurrency(amount)}`
+  }).join('\n')
+  
+  return `📈 <b>Weekly Report</b>
+
+<b>Daily Breakdown:</b>
+${dailyBreakdown}
+
+${getVisualSeparator()}
+<b>Week Total:</b> ${formatCurrency(total)}/${formatCurrency(weekBudget)}
+${getProgressBar(total, weekBudget)} ${((total/weekBudget)*100).toFixed(0)}%
+
+<b>Daily Average:</b> ${formatCurrency(Math.floor(total / 7))}
+<b>Status:</b> ${total <= weekBudget ? '✅ On track!' : '⚠️ Over budget!'}`
+}
+
+// Get month report
+async function getMonthReport(profile: any): Promise<string> {
+  const monthStart = startOfMonth(new Date())
+  const { data: expenses } = await supabase
+    .from('expenses')
+    .select('*, categories(name)')
+    .eq('profile_id', profile.id)
+    .gte('expense_date', monthStart.toISOString())
+  
+  const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
+  const remaining = profile.personal_budget - total
+  const daysInMonth = 30
+  const daysPassed = new Date().getDate()
+  const daysLeft = daysInMonth - daysPassed
+  
+  const categoryTotals: Record<string, number> = {}
+  expenses?.forEach(e => {
+    const cat = e.categories?.name || 'Other'
+    categoryTotals[cat] = (categoryTotals[cat] || 0) + parseFloat(e.amount)
+  })
+  
+  const topCategories = Object.entries(categoryTotals)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 3)
+    .map(([cat, amount]) => `${getCategoryEmoji(cat)} ${cat}: ${formatCurrency(amount)}`)
+    .join('\n')
+  
+  return `📊 <b>Monthly Report</b>
+
+<b>Progress:</b> Day ${daysPassed} of ${daysInMonth}
+
+<b>Budget Status:</b>
+${getProgressBar(total, profile.personal_budget, 20)}
+${formatCurrency(total)} / ${formatCurrency(profile.personal_budget)} (${((total/profile.personal_budget)*100).toFixed(0)}%)
+
+<b>Top Categories:</b>
+${topCategories}
+
+${getVisualSeparator()}
+💰 <b>Remaining:</b> ${formatCurrency(remaining)}
+📅 <b>Days Left:</b> ${daysLeft}
+📊 <b>Suggested Daily:</b> ${formatCurrency(Math.floor(remaining / daysLeft))}
+
+${remaining < 5000 ? '⚠️ Low balance - spend carefully!' : '✅ Good progress - keep it up!'}`
+}
+
+// Get weekend analysis
+async function getWeekendAnalysis(profile: any): Promise<string> {
+  const lastSaturday = subDays(new Date(), getDay(new Date()) + 1)
+  const lastSunday = addDays(lastSaturday, 1)
+  
+  const { data: lastWeekend } = await supabase
+    .from('expenses')
+    .select('amount')
+    .eq('profile_id', profile.id)
+    .gte('expense_date', format(lastSaturday, 'yyyy-MM-dd'))
+    .lte('expense_date', format(lastSunday, 'yyyy-MM-dd'))
+  
+  const lastWeekendTotal = lastWeekend?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
+  
+  const weekdayExpenses = await getWeekdayAverage(profile)
+  const weekendAverage = lastWeekendTotal / 2
+  const difference = weekdayExpenses > 0 ? ((weekendAverage - weekdayExpenses) / weekdayExpenses * 100).toFixed(0) : 0
+  
+  return `📅 <b>Weekend Analysis</b>
+
+<b>Last Weekend:</b>
+• Saturday: ${formatCurrency(lastWeekendTotal * 0.6)} (estimated)
+• Sunday: ${formatCurrency(lastWeekendTotal * 0.4)} (estimated)
+• Total: ${formatCurrency(lastWeekendTotal)}
+
+<b>Comparison:</b>
+• Weekday avg: ${formatCurrency(weekdayExpenses)}/day
+• Weekend avg: ${formatCurrency(weekendAverage)}/day
+• Difference: ${difference}% higher
+
+${getVisualSeparator()}
+💡 <b>Tips for this weekend:</b>
+• Set limit: ${formatCurrency(Math.min(2500, profile.personal_budget * 0.1))}
+• Avoid impulse purchases
+• Plan activities in advance
+• Track as you spend`
+}
+
+// Get category report
+async function getCategoryReport(profile: any, categoryName: string): Promise<string> {
+  const { data: category } = await supabase
+    .from('categories')
+    .select('*')
+    .eq('name', categoryName)
+    .eq('profile_id', profile.id)
+    .single()
+  
+  if (!category) {
+    return `❌ Category "${categoryName}" not found`
+  }
+  
+  const monthStart = startOfMonth(new Date())
+  const { data: expenses } = await supabase
+    .from('expenses')
+    .select('*')
+    .eq('profile_id', profile.id)
+    .eq('category_id', category.id)
+    .gte('expense_date', monthStart.toISOString())
+    .order('expense_date', { ascending: false })
+    .limit(10)
+  
+  const total = expenses?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
+  const budget = category.budget_amount || (profile.personal_budget * 0.2)
+  
+  const recentList = expenses?.slice(0, 5).map(e => 
+    `• ${format(new Date(e.expense_date), 'MMM d')}: ${formatCurrency(e.amount)} - ${e.description}`
+  ).join('\n') || 'No expenses yet'
+  
+  return `${getCategoryEmoji(categoryName)} <b>${categoryName} Report</b>
+
+<b>This Month:</b>
+${getProgressBar(total, budget, 15)}
+${formatCurrency(total)} / ${formatCurrency(budget)} (${((total/budget)*100).toFixed(0)}%)
+
+<b>Recent Expenses:</b>
+${recentList}
+
+${getVisualSeparator()}
+<b>Daily Average:</b> ${formatCurrency(Math.floor(total / new Date().getDate()))}
+<b>Remaining:</b> ${formatCurrency(budget - total)}
+<b>Status:</b> ${total > budget ? '⚠️ Over budget!' : '✅ Within budget'}`
+}
+
+// Get detailed report
+async function getDetailedReport(profile: any): Promise<string> {
+  const monthSpent = await getMonthlySpent(profile)
+  const weekSpent = await getWeeklySpent(profile)
+  const todaySpent = await getTodayTotal(profile)
+  const remaining = profile.personal_budget - monthSpent
+  
+  return `📋 <b>Detailed Financial Report</b>
+
+${getVisualSeparator()}
+<b>📊 Overview:</b>
+• Today: ${formatCurrency(todaySpent)}
+• This Week: ${formatCurrency(weekSpent)}
+• This Month: ${formatCurrency(monthSpent)}
+• Remaining: ${formatCurrency(remaining)}
+
+${getVisualSeparator()}
+<b>📈 Progress:</b>
+Month: ${getProgressBar(monthSpent, profile.personal_budget)}
+Week: ${getProgressBar(weekSpent, Math.floor(profile.personal_budget/4))}
+Today: ${getProgressBar(todaySpent, Math.floor(profile.personal_budget/30))}
+
+${getVisualSeparator()}
+<b>💡 Insights:</b>
+• Daily Average: ${formatCurrency(Math.floor(monthSpent / new Date().getDate()))}
+• Projected Month: ${formatCurrency(Math.floor(monthSpent / new Date().getDate() * 30))}
+• Status: ${remaining > 10000 ? '✅ Healthy' : remaining > 5000 ? '🟡 Caution' : '🔴 Critical'}
+
+<i>Use category commands (food, travel, etc.) for detailed breakdowns</i>`
+}
+
+// Get weekday average
+async function getWeekdayAverage(profile: any): Promise<number> {
+  const lastMonday = subDays(new Date(), getDay(new Date()) + 6)
+  const lastFriday = addDays(lastMonday, 4)
+  
+  const { data } = await supabase
+    .from('expenses')
+    .select('amount')
+    .eq('profile_id', profile.id)
+    .gte('expense_date', format(lastMonday, 'yyyy-MM-dd'))
+    .lte('expense_date', format(lastFriday, 'yyyy-MM-dd'))
+  
+  const total = data?.reduce((sum, e) => sum + parseFloat(e.amount), 0) || 0
+  return total / 5
+}
+
+// Get balance report
+async function getBalanceReport(profile: any): Promise<{ message: string; keyboard?: any }> {
+  const monthSpent = await getMonthlySpent(profile)
+  const remaining = profile.personal_budget - monthSpent
+  const dailyBudget = Math.floor(profile.personal_budget / 30)
+  const daysInMonth = 30
+  const daysPassed = new Date().getDate()
+  const daysLeft = daysInMonth - daysPassed
+  const suggestedDaily = daysLeft > 0 ? Math.floor(remaining / daysLeft) : 0
+  
+  const weekSpent = await getWeeklySpent(profile)
+  const todaySpent = await getTodayTotal(profile)
+  
+  const spendingPace = daysPassed > 0 ? Math.floor(monthSpent / daysPassed) : 0
+  const projectedMonthEnd = spendingPace * daysInMonth
+  const projectedSavings = profile.personal_budget - projectedMonthEnd
+  
+  let statusEmoji = '💚'
+  let statusText = 'Excellent!'
+  let advice = '✨ Keep up the great work!'
+  
+  if (remaining < 3000) {
+    statusEmoji = '🔴'
+    statusText = 'Critical!'
+    advice = '⚠️ Only essential expenses recommended'
+  } else if (remaining < 7000) {
+    statusEmoji = '🟡'
+    statusText = 'Caution'
+    advice = '💡 Be mindful of spending'
+  } else if (remaining < 15000) {
+    statusEmoji = '🟢'
+    statusText = 'Good'
+    advice = '👍 You\'re doing well'
+  }
+  
+  const percentUsed = ((monthSpent / profile.personal_budget) * 100).toFixed(1)
+  const percentRemaining = ((remaining / profile.personal_budget) * 100).toFixed(1)
+  
+  const message = `💰 <b>Balance Report</b>
+
+${getVisualSeparator()}
+<b>Month Status:</b> ${statusEmoji} ${statusText}
+
+<b>Budget:</b> ${formatCurrency(profile.personal_budget)}
+<b>Spent:</b> ${formatCurrency(monthSpent)} (${percentUsed}%)
+<b>Remaining:</b> ${formatCurrency(remaining)} (${percentRemaining}%)
+
+${getProgressBar(monthSpent, profile.personal_budget, 20)}
+
+${getVisualSeparator()}
+📊 <b>Spending Breakdown:</b>
+• Today: ${formatCurrency(todaySpent)} ${todaySpent > dailyBudget ? '⚠️' : '✅'}
+• This Week: ${formatCurrency(weekSpent)}
+• Daily Average: ${formatCurrency(spendingPace)}
+
+${getVisualSeparator()}
+📅 <b>Time Analysis:</b>
+• Days Passed: ${daysPassed}/${daysInMonth}
+• Days Left: ${daysLeft}
+• Suggested Daily: ${formatCurrency(suggestedDaily)}
+
+${getVisualSeparator()}
+📈 <b>Projections:</b>
+• Month-end Total: ${formatCurrency(projectedMonthEnd)}
+• Expected ${projectedSavings >= 0 ? 'Savings' : 'Overspend'}: ${formatCurrency(Math.abs(projectedSavings))}
+
+${getVisualSeparator()}
+${advice}
+
+${remaining < 5000 ? '\n🔔 <b>Alert:</b> Consider postponing non-essential purchases' : ''}
+${suggestedDaily < 500 ? '\n⚠️ <b>Warning:</b> Very tight daily budget ahead!' : ''}`
+  
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '📊 Today', callback_data: 'today_total' },
+        { text: '📈 Week', callback_data: 'week_summary' }
+      ],
+      [
+        { text: '📋 Full Report', callback_data: 'full_report' },
+        { text: '➕ Add Expense', callback_data: 'add_expense' }
+      ]
+    ]
+  }
+  
+  return { message, keyboard }
+}
 
 export async function GET() {
   return NextResponse.json({ 
@@ -1217,7 +1281,9 @@ export async function GET() {
       'Interactive quick commands',
       'Visual enhancements',
       'Recurring expense management',
-      'Enhanced conversations'
+      'Enhanced conversations',
+      'All keyboard buttons working',
+      'Fixed command recognition'
     ]
   })
 }
