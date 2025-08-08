@@ -104,26 +104,6 @@ Set your monthly personal budget (separate from savings/investments)
 - **9 AM**: "Good morning! You have ₹870/day for the next 15 days. Yesterday: ₹450"
 - **7 PM**: "Today's total: ₹1,200 (₹330 over budget). Consider a no-spend day tomorrow."
 
-## 📈 Unique Features
-
-### 🗓️ Fiscal Month Logic
-Unlike traditional expense trackers that reset monthly, this app understands your salary cycle:
-- Budget from 7th Jan to 6th Feb (if salary day is 7th)
-- Daily budget adjusts based on remaining days until payday
-- Real-time payday countdown
-
-### 🤖 Telegram Bot Intelligence
-- Parses natural language: "Coffee with friends 250"
-- Understands categories automatically
-- Sends contextual alerts based on spending patterns
-- Works offline (messages queue when back online)
-
-### 📊 Advanced Analytics Dashboard
-- **Heatmap Calendar**: See spending intensity across your fiscal month
-- **Weekly Trends**: Compare week-over-week spending patterns  
-- **Category Analysis**: Budget vs actual with visual progress bars
-- **6-Month Overview**: Track long-term spending trends
-
 ## 🎯 Perfect For
 
 - **Salary earners** who think in pay cycles, not calendar months
@@ -158,10 +138,6 @@ We love contributions! Whether it's:
 - 🎨 UI enhancements
 
 See [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-## 📜 License
-
-MIT License - feel free to use this for personal or commercial projects.
 
 ---
 
