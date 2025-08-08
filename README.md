@@ -73,7 +73,7 @@ CRON_SECRET=your_cron_secret
 
 ### 3. Database Setup
 1. Create a Supabase project
-2. Run the provided SQL migrations
+2. Run the provided SQL migrations [Query Gist](https://gist.github.com/adityasingh-io/318c8119e900218759cf57734de0d816)
 3. Set up your Telegram bot via [@BotFather](https://t.me/BotFather)
 
 ### 4. Run Development
