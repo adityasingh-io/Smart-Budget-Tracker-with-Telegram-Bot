@@ -1,4 +1,3 @@
-// components/MonthlySalaryManager.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -47,7 +46,7 @@ export default function MonthlySalaryManager() {
         .select('*')
         .eq('profile_id', profile.id)
         .order('month', { ascending: false })
-        .limit(12) // Last 12 months
+        .limit(12)
 
       if (salaryError) throw salaryError
       setMonthlySalaries(data || [])
@@ -83,7 +82,6 @@ export default function MonthlySalaryManager() {
       const monthDate = new Date(formData.month + '-01')
 
       if (editingMonth) {
-        // Update existing
         const { error } = await supabase
           .from('monthly_salaries')
           .update({
@@ -97,7 +95,6 @@ export default function MonthlySalaryManager() {
         if (error) throw error
         toast.success('Monthly salary updated!')
       } else {
-        // Insert new
         const { error } = await supabase
           .from('monthly_salaries')
           .insert({
@@ -119,7 +116,6 @@ export default function MonthlySalaryManager() {
         }
       }
 
-      // Reset form
       setEditingMonth(null)
       setFormData({
         month: format(new Date(), 'yyyy-MM'),
@@ -128,7 +124,6 @@ export default function MonthlySalaryManager() {
         notes: ''
       })
       
-      // Reload data
       loadMonthlySalaries()
     } catch (error: any) {
       console.error('Error saving monthly salary:', error)

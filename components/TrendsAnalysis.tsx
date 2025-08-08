@@ -4,23 +4,45 @@ import { useStore } from '@/lib/store'
 import { format, subMonths } from 'date-fns'
 
 export default function TrendsAnalysis() {
-  const { expenses, settings } = useStore()
-
-  const getLast6Months = () => {
+  const { expenses, settings, getFiscalMonthBounds } = useStore()
+  
+  const getLast6FiscalMonths = () => {
+    const today = new Date()
+    const salaryDay = settings.salaryDay || 7
     const months = []
+    
     for (let i = 5; i >= 0; i--) {
-      const date = subMonths(new Date(), i)
+      const referenceDate = subMonths(today, i)
+      const year = referenceDate.getFullYear()
+      const month = referenceDate.getMonth()
+      const currentDay = referenceDate.getDate()
+      
+      let fiscalStart: Date
+      let fiscalEnd: Date
+      
+      if (currentDay >= salaryDay) {
+        fiscalStart = new Date(year, month, salaryDay, 0, 0, 0)
+        fiscalEnd = new Date(year, month + 1, salaryDay - 1, 23, 59, 59)
+      } else {
+        fiscalStart = new Date(year, month - 1, salaryDay, 0, 0, 0)
+        fiscalEnd = new Date(year, month, salaryDay - 1, 23, 59, 59)
+      }
+      
       months.push({
-        label: format(date, 'MMM'),
-        month: format(date, 'yyyy-MM'),
+        label: format(fiscalStart, 'MMM'),
+        fiscalStart,
+        fiscalEnd,
       })
     }
     return months
   }
 
-  const months = getLast6Months()
-  const monthlyData = months.map(({ label, month }) => {
-    const monthExpenses = expenses.filter(e => e.date.startsWith(month))
+  const months = getLast6FiscalMonths()
+  const monthlyData = months.map(({ label, fiscalStart, fiscalEnd }) => {
+    const monthExpenses = expenses.filter(e => {
+      const expenseDate = new Date(e.date)
+      return expenseDate >= fiscalStart && expenseDate <= fiscalEnd
+    })
     return {
       label,
       total: monthExpenses.reduce((sum, e) => sum + e.amount, 0),

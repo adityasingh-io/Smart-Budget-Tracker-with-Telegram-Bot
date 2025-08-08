@@ -1,15 +1,13 @@
 'use client'
 
 import { useStore } from '@/lib/store'
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay } from 'date-fns'
+import { format, eachDayOfInterval, getDay } from 'date-fns'
 
 export default function HeatmapCalendar() {
-  const { expenses, settings } = useStore()
+  const { expenses, settings, getFiscalMonthBounds } = useStore()
   
-  const currentMonth = new Date()
-  const monthStart = startOfMonth(currentMonth)
-  const monthEnd = endOfMonth(currentMonth)
-  const days = eachDayOfInterval({ start: monthStart, end: monthEnd })
+  const { fiscalStart, fiscalEnd } = getFiscalMonthBounds()
+  const days = eachDayOfInterval({ start: fiscalStart, end: fiscalEnd })
 
   const getSpendingForDay = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd')
@@ -31,7 +29,7 @@ export default function HeatmapCalendar() {
 
   return (
     <div className="card">
-      <h3 className="text-lg font-semibold mb-4">Spending Heatmap - {format(currentMonth, 'MMMM yyyy')}</h3>
+      <h3 className="text-lg font-semibold mb-4">Spending Heatmap - Fiscal Month ({format(fiscalStart, 'MMM d')} - {format(fiscalEnd, 'MMM d')})</h3>
       
       <div className="grid grid-cols-7 gap-1 mb-2">
         {weekDays.map(day => (
@@ -42,7 +40,7 @@ export default function HeatmapCalendar() {
       </div>
 
       <div className="grid grid-cols-7 gap-1">
-        {Array.from({ length: getDay(monthStart) }).map((_, i) => (
+        {Array.from({ length: getDay(fiscalStart) }).map((_, i) => (
           <div key={`empty-${i}`} className="aspect-square" />
         ))}
         

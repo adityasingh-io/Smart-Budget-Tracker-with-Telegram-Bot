@@ -1,17 +1,42 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, LineElement, PointElement } from 'chart.js'
 import { Doughnut, Bar, Line } from 'react-chartjs-2'
 import { useStore } from '@/lib/store'
+import { startOfWeek, endOfWeek, startOfQuarter, endOfQuarter, startOfYear, endOfYear } from 'date-fns'
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, LineElement, PointElement)
 
 export default function ChartsSection({ timeRange }: { timeRange: string }) {
-  const { expenses, settings, categories } = useStore()
+  const { expenses, settings, categories, getFiscalMonthBounds } = useStore()
+  
+  const getTimeRangeBounds = () => {
+    const now = new Date()
+    switch (timeRange) {
+      case 'week':
+        return { start: startOfWeek(now), end: endOfWeek(now) }
+      case 'month':
+        const bounds = getFiscalMonthBounds()
+        return { start: bounds.fiscalStart, end: bounds.fiscalEnd }
+      case 'quarter':
+        return { start: startOfQuarter(now), end: endOfQuarter(now) }
+      case 'year':
+        return { start: startOfYear(now), end: endOfYear(now) }
+      default:
+        const defaultBounds = getFiscalMonthBounds()
+        return { start: defaultBounds.fiscalStart, end: defaultBounds.fiscalEnd }
+    }
+  }
+  
+  const { start, end } = getTimeRangeBounds()
+  
+  const filteredExpenses = expenses.filter(e => {
+    const expenseDate = new Date(e.date)
+    return expenseDate >= start && expenseDate <= end
+  })
 
   const categoryData = categories.reduce((acc, cat) => {
-    acc[cat.name] = expenses
+    acc[cat.name] = filteredExpenses
       .filter(e => e.category === cat.name)
       .reduce((sum, e) => sum + e.amount, 0)
     return acc

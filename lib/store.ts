@@ -124,34 +124,31 @@ export const useStore = create<Store>((set, get) => ({
         profile = newProfile
       }
   
-      // Calculate which month's salary we need (based on fiscal month)
       const today = new Date()
       const currentDay = today.getDate()
       const salaryDay = profile.salary_day || 7
       
       let fiscalStart: Date
-      let fiscalMonth: Date // The month we need salary data for
+      let fiscalMonth: Date
       
       if (currentDay >= salaryDay) {
         fiscalStart = new Date(today.getFullYear(), today.getMonth(), salaryDay, 0, 0, 0)
-        fiscalMonth = new Date(today.getFullYear(), today.getMonth(), 1) // Current month
+        fiscalMonth = new Date(today.getFullYear(), today.getMonth(), 1)
       } else {
         fiscalStart = new Date(today.getFullYear(), today.getMonth() - 1, salaryDay, 0, 0, 0)
-        fiscalMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1) // Previous month
+        fiscalMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1)
       }
-      
-      // IMPORTANT: Fetch from monthly_salaries table!
       console.log('🔍 FETCHING MONTHLY SALARY FOR:', format(fiscalMonth, 'yyyy-MM'))
       
-      let actualSalary = profile.total_salary || 100000 // fallback
-      let actualBudget = profile.personal_budget || 35000 // fallback
+      let actualSalary = profile.total_salary || 100000
+      let actualBudget = profile.personal_budget || 35000
       
       try {
         const { data: monthlySalary, error: salaryError } = await supabase
           .from('monthly_salaries')
           .select('*')
           .eq('profile_id', profile.id)
-          .eq('month', format(fiscalMonth, 'yyyy-MM') + '-01') // Format: YYYY-MM-01
+          .eq('month', format(fiscalMonth, 'yyyy-MM') + '-01')
           .single()
         
         if (monthlySalary && !salaryError) {
@@ -163,7 +160,6 @@ export const useStore = create<Store>((set, get) => ({
           console.log('⚠️ No monthly salary found for', format(fiscalMonth, 'yyyy-MM'))
           console.log('Creating monthly salary entry with defaults...')
           
-          // Create monthly_salaries entry if it doesn't exist
           const { data: newMonthlySalary, error: createSalaryError } = await supabase
             .from('monthly_salaries')
             .insert({
@@ -240,8 +236,8 @@ export const useStore = create<Store>((set, get) => ({
         profileId: profile.id,
         settings: {
           currency: profile.currency || '₹',
-          totalSalary: actualSalary, // FROM MONTHLY_SALARIES!
-          personalBudget: actualBudget, // FROM MONTHLY_SALARIES!
+          totalSalary: actualSalary,
+          personalBudget: actualBudget,
           salaryDay: profile.salary_day || 7,
           dailyFoodBudget: profile.daily_food_budget || 400,
           categoryBudgets,
@@ -536,7 +532,6 @@ export const useStore = create<Store>((set, get) => ({
   getDailyBudget: () => {
     const { settings } = get()
     const daysInFiscalMonth = get().getDaysInFiscalMonth()
-    // Original daily budget = total budget ÷ days in fiscal month
     return Math.floor(settings.personalBudget / daysInFiscalMonth)
   },
 
@@ -551,10 +546,8 @@ export const useStore = create<Store>((set, get) => ({
     let daysUntilPayday: number
     
     if (currentDay < salaryDay) {
-      // Payday is later this month
       daysUntilPayday = salaryDay - currentDay
     } else if (currentDay === salaryDay) {
-      // Today is payday - after noon calculate next month
       const hourOfDay = today.getHours()
       if (hourOfDay < 12) {
         daysUntilPayday = 0
@@ -564,7 +557,6 @@ export const useStore = create<Store>((set, get) => ({
         daysUntilPayday = Math.ceil((nextPayday.getTime() - today.getTime()) / msPerDay)
       }
     } else {
-      // Payday passed - calculate to next month
       const nextPayday = new Date(currentYear, currentMonth + 1, salaryDay)
       const msPerDay = 1000 * 60 * 60 * 24
       daysUntilPayday = Math.ceil((nextPayday.getTime() - today.getTime()) / msPerDay)
@@ -574,7 +566,6 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   getDaysLeftInFiscalMonth: () => {
-    // Days left in fiscal month = days until payday
     return get().getPaydayCountdown()
   },
 
@@ -585,24 +576,19 @@ export const useStore = create<Store>((set, get) => ({
     const daysPassed = get().getDaysPassedInFiscalMonth()
     const daysUntilPayday = get().getPaydayCountdown()
     
-    // If over budget, can't spend more
     if (remaining <= 0) {
       return totalSpent
     }
     
-    // If first day of month
     if (daysPassed === 0 || totalSpent === 0) {
       return 0
     }
     
-    // Calculate daily average spending so far
     const dailyAverage = totalSpent / daysPassed
     
-    // If continuing at current pace
     const projectedAdditionalSpending = dailyAverage * daysUntilPayday
     const projectedTotal = totalSpent + projectedAdditionalSpending
     
-    // Cap at budget (can't project more than budget allows)
     return Math.min(Math.round(projectedTotal), settings.personalBudget)
   },
 
@@ -616,7 +602,6 @@ export const useStore = create<Store>((set, get) => ({
       return expenseDate >= fiscalStart && expenseDate <= fiscalEnd
     })
     
-    // Core calculations
     const totalSpent = get().getTotalSpent()
     const remaining = get().getRemainingBudget()
     const daysInFiscalMonth = get().getDaysInFiscalMonth()
@@ -624,27 +609,21 @@ export const useStore = create<Store>((set, get) => ({
     const daysUntilPayday = get().getPaydayCountdown()
     const todaySpent = get().getTodaySpending()
     
-    // Original daily budget (budget ÷ total days in month)
     const originalDailyBudget = Math.floor(settings.personalBudget / daysInFiscalMonth)
     
-    // Adjusted daily budget (remaining ÷ days left)
-    // If over budget, you can't spend anymore
     const adjustedDailyBudget = remaining <= 0 
       ? 0 
       : daysUntilPayday > 0 
         ? Math.floor(remaining / daysUntilPayday)
-        : remaining // If payday is today, can spend all remaining
+        : remaining
     
-    // Calculate spending pace
     const dailyAverage = daysPassed > 0 ? Math.round(totalSpent / daysPassed) : 0
     const expectedSpending = originalDailyBudget * daysPassed
     const overspending = totalSpent - expectedSpending
     
-    // Projected month end
     const projectedMonthEnd = get().getProjectedMonthEnd()
     const projectedSavings = settings.personalBudget - projectedMonthEnd
     
-    // Determine status and message
     let spendingStatus: string
     let spendingMessage: string
     
@@ -668,8 +647,6 @@ export const useStore = create<Store>((set, get) => ({
       spendingMessage = `✅ On track! Can spend ₹${adjustedDailyBudget}/day for ${daysUntilPayday} days`
     }
     
-    // Weekly analysis (Monday to Sunday)
-    // Get start of current week (Monday)
     const currentWeekDay = today.getDay()
     const daysToMonday = currentWeekDay === 0 ? 6 : currentWeekDay - 1
     const currentWeekStart = new Date(today)
@@ -680,28 +657,24 @@ export const useStore = create<Store>((set, get) => ({
     currentWeekEnd.setDate(currentWeekStart.getDate() + 6)
     currentWeekEnd.setHours(23, 59, 59, 999)
     
-    // Get previous week
     const previousWeekStart = new Date(currentWeekStart)
     previousWeekStart.setDate(currentWeekStart.getDate() - 7)
     const previousWeekEnd = new Date(previousWeekStart)
     previousWeekEnd.setDate(previousWeekStart.getDate() + 6)
     previousWeekEnd.setHours(23, 59, 59, 999)
     
-    // Calculate current week spending
     const currentWeekExpenses = monthExpenses.filter(e => {
       const expenseDate = new Date(e.date)
       return expenseDate >= currentWeekStart && expenseDate <= currentWeekEnd
     })
     const currentWeekTotal = currentWeekExpenses.reduce((sum, e) => sum + e.amount, 0)
     
-    // Calculate previous week spending
     const previousWeekExpenses = monthExpenses.filter(e => {
       const expenseDate = new Date(e.date)
       return expenseDate >= previousWeekStart && expenseDate <= previousWeekEnd
     })
     const previousWeekTotal = previousWeekExpenses.reduce((sum, e) => sum + e.amount, 0)
     
-    // Weekend vs Weekday analysis - WHOLE MONTH (keep original)
     const weekdayExpenses = monthExpenses.filter(e => !isWeekend(new Date(e.date)))
     const weekendExpenses = monthExpenses.filter(e => isWeekend(new Date(e.date)))
     
@@ -720,14 +693,12 @@ export const useStore = create<Store>((set, get) => ({
       ? ((weekendAverage - weekdayAverage) / weekdayAverage * 100) 
       : 0
     
-    // Food spending analysis
     const foodExpenses = monthExpenses.filter(e => e.category === 'Food')
     const foodTotal = foodExpenses.reduce((sum, e) => sum + e.amount, 0)
     const foodDates = [...new Set(foodExpenses.map(e => format(new Date(e.date), 'yyyy-MM-dd')))]
     const foodDays = foodDates.length
     const avgFoodSpending = foodDays > 0 ? Math.round(foodTotal / foodDays) : 0
     
-    // Calculate food budget streak
     let streak = 0
     for (let i = 0; i < daysPassed; i++) {
       const checkDate = subDays(today, i)
@@ -745,7 +716,6 @@ export const useStore = create<Store>((set, get) => ({
       }
     }
     
-    // Top spending categories
     const categoryTotals = monthExpenses.reduce((acc, e) => {
       acc[e.category] = (acc[e.category] || 0) + e.amount
       return acc
@@ -754,7 +724,6 @@ export const useStore = create<Store>((set, get) => ({
     const topCategory = Object.entries(categoryTotals)
       .sort(([,a], [,b]) => b - a)[0]
     
-    // Current week analysis for weekly breakdown
     const currentWeekWeekdayExpenses = currentWeekExpenses.filter(e => !isWeekend(new Date(e.date)))
     const currentWeekWeekendExpenses = currentWeekExpenses.filter(e => isWeekend(new Date(e.date)))
     
@@ -780,7 +749,7 @@ export const useStore = create<Store>((set, get) => ({
         daysTotal: daysInFiscalMonth,
         daysPassed,
         daysUntilPayday,
-        daysLeft: daysUntilPayday, // Same as days until payday
+        daysLeft: daysUntilPayday,
         percentComplete: Math.round((daysPassed / daysInFiscalMonth) * 100),
         label: daysUntilPayday === 0 
           ? `🎉 Payday!` 
@@ -852,7 +821,6 @@ export const useStore = create<Store>((set, get) => ({
           : `Weekend spending controlled (₹${currentWeekWeekendAverage}/day)`
       },
       
-      // Keep original weekendSpending for backward compatibility (whole month)
       weekendSpending: {
         status: weekendAverage > weekdayAverage * 1.5 ? 'warning' : 'success',
         message: weekendCount === 0 
@@ -927,7 +895,6 @@ async function sendTelegramNotification(expense: any, get: any) {
     const insights = get().getInsights()
     const originalDailyBudget = get().getDailyBudget()
     
-    // Main expense notification
     let message = `💰 <b>New Expense</b>\n\n`
     message += `Amount: ${settings.currency}${expense.amount}\n`
     message += `Category: ${expense.category}\n`
@@ -942,7 +909,6 @@ async function sendTelegramNotification(expense: any, get: any) {
     
     await telegram.sendMessage(message)
     
-    // Send alerts based on situation
     if (remaining <= 0) {
       await telegram.sendMessage(
         `🔴 <b>BUDGET EXHAUSTED!</b>\n\n` +
@@ -974,27 +940,6 @@ async function sendTelegramNotification(expense: any, get: any) {
   }
 }
 
-// Debug helper for development
-if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-  (window as any).debugStore = () => {
-    const state = useStore.getState()
-    const insights = state.getInsights()
-    console.log('=== STORE DEBUG ===')
-    console.log('Budget:', state.settings.personalBudget)
-    console.log('Total Spent:', state.getTotalSpent())
-    console.log('Remaining:', state.getRemainingBudget())
-    console.log('Days until payday:', state.getPaydayCountdown())
-    console.log('Days passed:', state.getDaysPassedInFiscalMonth())
-    console.log('Original daily budget:', state.getDailyBudget())
-    console.log('Adjusted daily budget:', insights.summary.adjustedDailyBudget)
-    console.log('Can spend today:', insights.summary.canSpendToday)
-    console.log('Spending pace:', insights.spendingPace.message)
-    console.log('Full insights:', insights)
-    return insights
-  }
-}
-
-// Debug helper for development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   (window as any).debugStore = () => {
     const state = useStore.getState()
